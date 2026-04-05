@@ -3,7 +3,26 @@
 const $=i=>document.getElementById(i),BLANK_IMG="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7",DEFAULT_LOGO="https://i.ibb.co/HLyQLWq3/481660396-10163959068984714-22543302724365985-n-removebg-preview.png",DEFAULT_NAME="อาหารตามสั่งอิ่มอร่อย";let initLogo=localStorage.getItem("aa_store_logo")||DEFAULT_LOGO,initName=localStorage.getItem("aa_store_name")||DEFAULT_NAME;if($("main-top-logo"))$("main-top-logo").src=initLogo;if($("receipt-logo-img"))$("receipt-logo-img").src=initLogo;if($("meta-apple-icon"))$("meta-apple-icon").href=initLogo;if($("meta-shortcut-icon"))$("meta-shortcut-icon").href=initLogo;if($("main-store-name"))$("main-store-name").innerText=initName;if($("receipt-store-name"))$("receipt-store-name").innerText=initName;document.title=initName+" - System";if($("meta-app-title"))$("meta-app-title").content=initName;
 const config={apiKey:"AIzaSyD2w_7lTRvWpHgyDEJZxkomUWiJflUqx4o",authDomain:"a-and-a-thaifood.firebaseapp.com",projectId:"a-and-a-thaifood",storageBucket:"a-and-a-thaifood.firebasestorage.app",messagingSenderId:"812227370680",appId:"1:812227370680:web:538b5550d7d04084729e4d",databaseURL:"https://a-and-a-thaifood-default-rtdb.asia-southeast1.firebasedatabase.app"};firebase.initializeApp(config);const db=firebase.database(),orderAlertSound=new Audio("https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3");let audioUnlocked=!1;document.body.addEventListener("click",()=>{if(!audioUnlocked)orderAlertSound.play().then(()=>{orderAlertSound.pause();orderAlertSound.currentTime=0;audioUnlocked=!0}).catch(e=>e)},{once:!0});const ROLES={admin:100,owner:80,staff:50,chef:50},ROLE_LABELS={admin:"ผู้ดูแลระบบ",owner:"เจ้าของร้าน",staff:"พนักงานรับออเดอร์",chef:"พ่อครัว"};
 let cart=[],posCart=[],currentModalItem=null,currentCartTable=null,currentPOSTable=null,currentSelectedOpts={},currentModalQty=1,editingCartIndex=-1,currentUser=localStorage.getItem("aa_logged_user"),editingMenuKey=null,editingEmpKey=null,isPOSMode=!1,returnModalAfterReceipt=null,currentCashInput="",currentAddMode="pos",savedScrollPositions={},savedWindowScrollY=0,editGroupCounter=0,editItemCounter=0,rawMenuData=[],globalGroups=[],dbCategoryOrder=[],isDragging=!1,currentModalCategory="",currentModalIndex=0,sortableInstances={},editorGroupsSortable=null,editorItemsSortables={},activeJiggleCategory=null,confirmActionCallback=null,tempSelectedTheme="dark",allStaffOrders=[],activeTables=[],currentOrderTab="new",lastPendingCount=0,unviewedOrders=!1,alertTimer=null,globalEmployees=[],globalStoreQR="",globalAdminPassword="060421",globalNumTables=6,globalTheme="dark",globalReportOverrides={},currentReportType="daily",licenseData={expiry:0,price:300,days:30,active:!0};
-window.applyTheme=t=>{document.body.className="";if(t&&t!=="dark")document.body.classList.add(`theme-${t}`);};window.closeModal=i=>{$(i).style.display="none"};window.showToast=m=>{let t=document.createElement("div");t.className="toast";t.innerText=m;$("toast-container").appendChild(t);setTimeout(()=>t.remove(),3000)};window.showConfirmModal=(t,d,c)=>{$("confirm-modal-title").innerText=t;$("confirm-modal-desc").innerText=d;confirmActionCallback=c;$("custom-confirm-modal").style.display="flex"};window.executeConfirmAction=()=>{if(confirmActionCallback)confirmActionCallback();closeModal("custom-confirm-modal")};window.showEnlargedImage=s=>{$("preview-enlarged-img").src=s;$("image-preview-modal").style.display="flex"};window.getUserRoleLevel=()=>{if(!currentUser)return 0;if(["admin","arm"].includes(currentUser.toLowerCase()))return 100;let e=globalEmployees.find(e=>e.username===currentUser);return e&&ROLES[e.role]?ROLES[e.role]:50};window.getPerms=()=>{if(!currentUser)return{};if(currentUser.toLowerCase()==="admin")return{pos:!0,history:!0,report:!0,alert:!0,menu:!0,emp:!0,editOrder:!0,cancelOrder:!0,currentOrder:!0,editReport:!0,store:!0};let e=globalEmployees.find(x=>x.username===currentUser);if(!e)return{};if(e.perms){if(typeof e.perms.editOrder==="undefined")e.perms.editOrder=e.role!=="chef";if(typeof e.perms.cancelOrder==="undefined")e.perms.cancelOrder=e.role!=="chef";if(typeof e.perms.currentOrder==="undefined")e.perms.currentOrder=e.role!=="chef";if(typeof e.perms.editReport==="undefined")e.perms.editReport=e.role==="owner";if(typeof e.perms.store==="undefined")e.perms.store=e.role==="owner";return e.perms}let r=e.role;return{pos:r!=="chef",currentOrder:r!=="chef",history:r!=="chef",report:r==="owner",alert:!0,menu:r==="owner",emp:r==="owner",editOrder:r!=="chef",cancelOrder:r!=="chef",editReport:r==="owner",store:r==="owner"}};window.checkPermissions=()=>{if(currentUser){let p=getPerms(),l=getUserRoleLevel();if($("add-menu-fab"))$("add-menu-fab").style.display=p.menu?"flex":"none";if($("side-report-btn"))$("side-report-btn").style.display=p.report?"flex":"none";if($("pos-main-btn"))$("pos-main-btn").style.display=p.pos?"flex":"none";if($("side-manage-emp"))$("side-manage-emp").style.display=p.emp?"flex":"none";if($("side-store-settings"))$("side-store-settings").style.display=p.store?"flex":"none";if($("daily-revenue-container"))$("daily-revenue-container").style.display=p.report?"flex":"none";$("admin-indicator").classList.remove("hidden");$("side-login-btn").classList.add("hidden");$("side-logout-btn").classList.remove("hidden");$("admin-indicator").innerText=l===100?"ADMIN":l>=80?"OWNER":"STAFF"}};window.fetchCurrentUserData=()=>{if(!currentUser)return;$("current-user-name").innerText=currentUser.toUpperCase();$("current-user-name").classList.remove("hidden");let r=["admin","arm"].includes(currentUser.toLowerCase())?"admin":globalEmployees.find(x=>x.username===currentUser)?.role||"staff";$("current-user-role").innerText=ROLE_LABELS[r]||"พนักงาน";$("current-user-role").classList.remove("hidden");if(r==="admin")db.ref("admin_settings/profile_pic").once("value").then(s=>{$("current-user-img").src=s.val()||initLogo});else $("current-user-img").src=globalEmployees.find(x=>x.username===currentUser)?.photo||initLogo;$("current-user-img").classList.remove("hidden")};window.togglePw=(i,e)=>{let o=$(i);if(o.type==="password"){o.type="text";e.innerText="visibility"}else{o.type="password";e.innerText="visibility_off"}};window.openChefZoom=k=>{let o=allStaffOrders.find(x=>x.key===k);if(!o)return;$("chef-zoom-title").innerText=o.customerName;$("chef-zoom-list").innerHTML=o.items?o.items.map((t,x)=>`<div class="flex items-center gap-4 border-b border-zinc-800 pb-4 mb-4 ${t.served?'opacity-40':''}"><img src="${t.img||BLANK_IMG}" class="w-24 h-24 rounded-2xl object-cover border border-zinc-700"><div class="flex-1"><div class="text-3xl font-black ${t.served?'text-zinc-500 line-through':'text-white'} mb-1">${t.qty} x ${t.name}</div><div class="text-xl font-bold ${t.served?'text-zinc-600':'text-yellow-400'}">${t.option}</div></div></div>`).join(""):"<p class='text-zinc-500'>ไม่มีรายการ</p>";$("chef-zoom-modal").style.display="flex"};
+window.applyTheme=t=>{document.body.className="";if(t&&t!=="dark")document.body.classList.add(`theme-${t}`);};window.closeModal=i=>{$(i).style.display="none"};window.showToast=m=>{let t=document.createElement("div");t.className="toast";t.innerText=m;$("toast-container").appendChild(t);setTimeout(()=>t.remove(),3000)};window.showConfirmModal=(t,d,c)=>{$("confirm-modal-title").innerText=t;$("confirm-modal-desc").innerText=d;confirmActionCallback=c;$("custom-confirm-modal").style.display="flex"};window.executeConfirmAction=()=>{if(confirmActionCallback)confirmActionCallback();closeModal("custom-confirm-modal")};window.showEnlargedImage=s=>{$("preview-enlarged-img").src=s;$("image-preview-modal").style.display="flex"};window.getUserRoleLevel=()=>{if(!currentUser)return 0;if(["admin","arm"].includes(currentUser.toLowerCase()))return 100;let e=globalEmployees.find(e=>e.username===currentUser);return e&&ROLES[e.role]?ROLES[e.role]:50};window.getPerms=()=>{if(!currentUser)return{};if(currentUser.toLowerCase()==="admin")return{pos:!0,history:!0,report:!0,alert:!0,menu:!0,emp:!0,editOrder:!0,cancelOrder:!0,currentOrder:!0,editReport:!0,store:!0};let e=globalEmployees.find(x=>x.username===currentUser);if(!e)return{};if(e.perms){if(typeof e.perms.editOrder==="undefined")e.perms.editOrder=e.role!=="chef";if(typeof e.perms.cancelOrder==="undefined")e.perms.cancelOrder=e.role!=="chef";if(typeof e.perms.currentOrder==="undefined")e.perms.currentOrder=e.role!=="chef";if(typeof e.perms.editReport==="undefined")e.perms.editReport=e.role==="owner";if(typeof e.perms.store==="undefined")e.perms.store=e.role==="owner";return e.perms}let r=e.role;return{pos:r!=="chef",currentOrder:r!=="chef",history:r!=="chef",report:r==="owner",alert:!0,menu:r==="owner",emp:r==="owner",editOrder:r!=="chef",cancelOrder:r!=="chef",editReport:r==="owner",store:r==="owner"}};window.checkPermissions=()=>{if(currentUser){let p=getPerms(),l=getUserRoleLevel();if($("add-menu-fab"))$("add-menu-fab").style.display=p.menu?"flex":"none";if($("side-report-btn"))$("side-report-btn").style.display=p.report?"flex":"none";if($("pos-main-btn"))$("pos-main-btn").style.display=p.pos?"flex":"none";if($("side-manage-emp"))$("side-manage-emp").style.display=p.emp?"flex":"none";if($("side-store-settings"))$("side-store-settings").style.display=p.store?"flex":"none";if($("daily-revenue-container"))$("daily-revenue-container").style.display=p.report?"flex":"none";$("admin-indicator").classList.remove("hidden");$("side-login-btn").classList.add("hidden");$("side-logout-btn").classList.remove("hidden");$("admin-indicator").innerText=l===100?"ADMIN":l>=80?"OWNER":"STAFF"}};window.fetchCurrentUserData=()=>{if(!currentUser)return;$("current-user-name").innerText=currentUser.toUpperCase();$("current-user-name").classList.remove("hidden");let r=["admin","arm"].includes(currentUser.toLowerCase())?"admin":globalEmployees.find(x=>x.username===currentUser)?.role||"staff";$("current-user-role").innerText=ROLE_LABELS[r]||"พนักงาน";$("current-user-role").classList.remove("hidden");if(r==="admin")db.ref("admin_settings/profile_pic").once("value").then(s=>{$("current-user-img").src=s.val()||initLogo});else $("current-user-img").src=globalEmployees.find(x=>x.username===currentUser)?.photo||initLogo;$("current-user-img").classList.remove("hidden")};window.togglePw=(i,e)=>{let o=$(i);if(o.type==="password"){o.type="text";e.innerText="visibility"}else{o.type="password";e.innerText="visibility_off"}};
+window.openChefZoom=k=>{
+    let o=allStaffOrders.find(x=>x.key===k);
+    if(!o)return;
+    $("chef-zoom-title").innerText=o.customerName;
+    $("chef-zoom-list").innerHTML=o.items?o.items.map((t,x)=>`
+        <div class="flex items-center gap-4 border-b border-zinc-800 pb-4 mb-4 ${t.served?'opacity-40':''}">
+            <img src="${t.img||BLANK_IMG}" class="w-24 h-24 rounded-2xl object-cover border border-zinc-700">
+            <div class="flex-1">
+                <div class="text-3xl font-black ${t.served?'text-zinc-500 line-through':'text-white'} mb-1">${t.qty} x ${t.name}</div>
+                <div class="text-xl font-bold ${t.served?'text-zinc-600':'text-yellow-400'}">${t.option}</div>
+            </div>
+            
+            <button onclick="playOrderAudio('${k}', ${x})" class="w-16 h-16 bg-blue-900/30 text-blue-400 hover:bg-blue-500 hover:text-white border border-blue-500/50 rounded-full flex items-center justify-center transition shadow-lg shrink-0 ${t.served?'hidden':''}">
+                <span class="material-symbols-outlined text-4xl">volume_up</span>
+            </button>
+
+        </div>`).join(""):"<p class='text-zinc-500'>ไม่มีรายการ</p>";
+    $("chef-zoom-modal").style.display="flex"
+};
 window.openExpiryZoomModal=()=>{$("zoom-expiry-text").innerText=new Date(licenseData.expiry).toLocaleString("th-TH");$("expiry-zoom-modal").style.display="flex";toggleSideMenu();};window.checkLicense=()=>{if(!licenseData.active){$("license-blocker").style.display="none";return}let n=Date.now(),e=n>licenseData.expiry,role=getUserRoleLevel(),a=role===100;if(e){if((a&&$("store-settings-modal").style.display==="flex")||$("login-modal").style.display==="flex"){$("license-blocker").style.display="none"}else{$("license-blocker").style.display="flex";if(a){$("btn-admin-login-blocker").classList.add("hidden");$("btn-admin-renew-blocker").classList.remove("hidden")}else{$("btn-admin-login-blocker").classList.remove("hidden");$("btn-admin-renew-blocker").classList.add("hidden")}if($("side-menu").classList.contains("active")) toggleSideMenu();document.querySelectorAll('.admin-modal').forEach(m=>{if(m.id!=="login-modal"&&m.id!=="store-settings-modal")m.style.display='none'})}}else{$("license-blocker").style.display="none"}if(role>=80&&!a&&licenseData.active){$("sidebar-expiry").classList.remove("hidden");$("sidebar-expiry").classList.add("flex");let diff=licenseData.expiry-n;if(diff>0){let d=Math.floor(diff/86400000),h=Math.floor((diff%86400000)/3600000),m=Math.floor((diff%3600000)/60000),s=Math.floor((diff%60000)/1000);let txt="";if(d>0)txt+=`${d} วัน `;if(d>0||h>0)txt+=`${h} ชม. `;txt+=`${m} นาที ${s} วิ.`;if($("side-expiry-countdown")){$("side-expiry-countdown").innerText="เหลืออีก: "+txt;$("side-expiry-countdown").className="text-yellow-500 font-bold text-[9px] bg-black/40 px-1.5 py-0.5 rounded border border-yellow-500/30 whitespace-nowrap"}if($("zoom-expiry-countdown")){$("zoom-expiry-countdown").innerText=txt;$("zoom-expiry-countdown").className="text-yellow-500 text-4xl font-black"}let daysRem=Math.ceil(diff/86400000);if(daysRem<=7){let tStr=new Date().toLocaleDateString(),last=localStorage.getItem("aa_last_warn");if(last!==tStr){localStorage.setItem("aa_last_warn",tStr);if($("expiry-warn-days"))$("expiry-warn-days").innerText=daysRem;$("expiry-warning-modal").style.display="flex"}}}else{if($("side-expiry-countdown")){$("side-expiry-countdown").innerText="หมดเวลาแล้ว";$("side-expiry-countdown").className="text-red-500 font-bold text-[9px] bg-black/40 px-1.5 py-0.5 rounded border border-red-500/30 whitespace-nowrap"}if($("zoom-expiry-countdown")){$("zoom-expiry-countdown").innerText="หมดเวลาแล้ว";$("zoom-expiry-countdown").className="text-red-500 text-4xl font-black"}}}else{$("sidebar-expiry").classList.add("hidden");$("sidebar-expiry").classList.remove("flex")}};setInterval(window.checkLicense,1000);
 window.onload=()=>{db.ref("employees").on("value",s=>{globalEmployees=[];if(s.exists())s.forEach(c=>{let e=c.val();e.key=c.key;globalEmployees.push(e)});fetchCurrentUserData();checkPermissions();if($("emp-manager-modal").style.display==="flex")renderEmployeeList()});db.ref("admin_settings").on("value",s=>{if(s.exists()){let d=s.val();if(d.license)licenseData=d.license;else{licenseData={expiry:Date.now()+259200000,price:300,days:30,active:!0};db.ref("admin_settings/license").set(licenseData)}if(licenseData.active===undefined)licenseData.active=!0;if(licenseData.active){let formattedDate=new Date(licenseData.expiry).toLocaleString("th-TH");if($("side-expiry-text"))$("side-expiry-text").innerText=formattedDate;if($("st-expiry-date"))$("st-expiry-date").innerText=formattedDate;}checkLicense();if(d.admin_password)globalAdminPassword=d.admin_password;globalNumTables=d.num_tables||6;globalTheme=d.theme||"dark";applyTheme(globalTheme);if(d.store_logo&&d.store_logo!==initLogo){localStorage.setItem("aa_store_logo",d.store_logo);$("main-top-logo").src=d.store_logo;$("receipt-logo-img").src=d.store_logo;$("meta-apple-icon").href=d.store_logo;$("meta-shortcut-icon").href=d.store_logo}if(d.store_name&&d.store_name!==initName){localStorage.setItem("aa_store_name",d.store_name);$("main-store-name").innerText=d.store_name;$("receipt-store-name").innerText=d.store_name;$("receipt-footer-name").innerText=`Thank you for choosing ${d.store_name}!`;document.title=d.store_name+" - System";$("meta-app-title").content=d.store_name}if(d.qr_code){globalStoreQR=d.qr_code;if($("store-qr-img"))$("store-qr-img").src=d.qr_code;if($("admin-qr-preview"))$("admin-qr-preview").src=d.qr_code}if(d.profile_pic&&$("blocker-admin-pic"))$("blocker-admin-pic").src=d.profile_pic;}});db.ref("report_overrides").on("value",s=>{globalReportOverrides=s.val()||{};if($("report-modal").style.display==="flex")renderReport(currentReportType)});db.ref("admin_settings/category_order").on("value",s=>{if(s.exists()){dbCategoryOrder=s.val();renderMenusFromData()}});db.ref("menus").on("value",s=>{rawMenuData=[];if(s.exists())s.forEach(c=>{rawMenuData.push({...c.val(),key:c.key})});renderMenusFromData()});db.ref("orders").on("value",s=>{activeTables=[];if(s.exists())s.forEach(c=>{let o=c.val();if(o.status==="pending"||o.status==="accepted")activeTables.push(o.customerName)});if(currentUser)handleOrdersUpdate(s)})};document.addEventListener("click",e=>{if(!e.target.closest(".jiggle-active")&&!e.target.closest(".reorder-btn")&&!e.target.closest(".category-drag-handle")&&!e.target.closest(".admin-modal-content")){activeJiggleCategory=null;document.querySelectorAll(".category-section.jiggle-active").forEach(s=>{s.classList.remove("jiggle-active");let c=s.dataset.catindex;if(sortableInstances[c])sortableInstances[c].option("disabled",!0)})}});
 window.showLoginView=()=>{$("login-modal").style.display="flex";toggleSideMenu()};window.showLoginViewOverBlocker=()=>{$("login-modal").style.display="flex";$("license-blocker").style.display="none"};window.openStoreSettingsOverBlocker=()=>{openStoreSettings();$("license-blocker").style.display="none";if($("side-menu").classList.contains("active")){$("side-menu").classList.remove("active");$("menu-overlay").style.display="none";}};window.handleLogin=()=>{let u=$("login-id").value.trim(),p=$("login-pw").value.trim();if(u.toLowerCase()==="admin"&&p===globalAdminPassword){localStorage.setItem("aa_logged_user","admin");location.reload()}else{let e=globalEmployees.find(x=>x.username===u&&x.password===p);if(e){localStorage.setItem("aa_logged_user",e.username);location.reload()}else showToast("รหัสผ่านไม่ถูกต้อง")}};window.handleLogout=()=>{localStorage.removeItem("aa_logged_user");location.reload()};window.showEmployeeManager=()=>{renderEmployeeList();$("emp-manager-modal").style.display="flex";toggleSideMenu()};window.autoSetPerms=()=>{let r=$("emp-role").value;$("p-pos").checked=r!=="chef";$("p-current-order").checked=r!=="chef";$("p-history").checked=r!=="chef";$("p-report").checked=r==="owner";$("p-edit-report").checked=r==="owner";$("p-alert").checked=!0;$("p-menu").checked=r==="owner";$("p-emp").checked=r==="owner";$("p-edit-order").checked=r!=="chef";$("p-cancel-order").checked=r!=="chef";$("p-store").checked=r==="owner"};window.openEmployeeEditor=(k="",d="")=>{editingEmpKey=k;let e=d?JSON.parse(decodeURIComponent(d)):null;$("editor-title").innerText=k?"แก้ไขพนักงาน":"เพิ่มพนักงาน";$("emp-photo-preview").src=e?.photo||"https://cdn-icons-png.flaticon.com/512/149/149071.png";$("emp-role").value=e?.role||"";$("emp-username").value=e?.username||"";$("emp-password").value=e?.password||"";if(currentUser.toLowerCase()==="admin"){$("emp-permissions-section").classList.remove("hidden");if(e&&e.perms){$("p-pos").checked=!!e.perms.pos;$("p-current-order").checked=e.perms.currentOrder!==undefined?!!e.perms.currentOrder:e.role!=="chef";$("p-history").checked=!!e.perms.history;$("p-report").checked=!!e.perms.report;$("p-edit-report").checked=e.perms.editReport!==undefined?!!e.perms.editReport:e.role==="owner";$("p-alert").checked=!!e.perms.alert;$("p-menu").checked=!!e.perms.menu;$("p-emp").checked=!!e.perms.emp;$("p-edit-order").checked=e.perms.editOrder!==undefined?!!e.perms.editOrder:e.role!=="chef";$("p-cancel-order").checked=e.perms.cancelOrder!==undefined?!!e.perms.cancelOrder:e.role!=="chef";$("p-store").checked=e.perms.store!==undefined?!!e.perms.store:e.role==="owner"}else if(e){let r=e.role;$("p-pos").checked=r!=="chef";$("p-current-order").checked=r!=="chef";$("p-history").checked=r!=="chef";$("p-report").checked=r==="owner";$("p-edit-report").checked=r==="owner";$("p-alert").checked=!0;$("p-menu").checked=r==="owner";$("p-emp").checked=r==="owner";$("p-edit-order").checked=r!=="chef";$("p-cancel-order").checked=r!=="chef";$("p-store").checked=r==="owner"}else{$("p-pos").checked=!1;$("p-current-order").checked=!1;$("p-history").checked=!1;$("p-report").checked=!1;$("p-edit-report").checked=!1;$("p-alert").checked=!1;$("p-menu").checked=!1;$("p-emp").checked=!1;$("p-edit-order").checked=!1;$("p-cancel-order").checked=!1;$("p-store").checked=!1}}else $("emp-permissions-section").classList.add("hidden");$("emp-editor-modal").style.display="flex"};window.saveEmployee=()=>{let r=$("emp-role").value,u=$("emp-username").value.trim(),p=$("emp-password").value.trim(),pic=$("emp-photo-preview").src;if(!r||!u||!p)return showToast("กรอกข้อมูลให้ครบ");let d={role:r,username:u,password:p,photo:pic};if(currentUser.toLowerCase()==="admin")d.perms={pos:$("p-pos").checked,currentOrder:$("p-current-order").checked,history:$("p-history").checked,report:$("p-report").checked,editReport:$("p-edit-report").checked,alert:$("p-alert").checked,menu:$("p-menu").checked,emp:$("p-emp").checked,editOrder:$("p-edit-order").checked,cancelOrder:$("p-cancel-order").checked,store:$("p-store").checked};else if(editingEmpKey){let o=globalEmployees.find(x=>x.key===editingEmpKey);if(o&&o.perms)d.perms=o.perms;else d.perms={pos:r!=="chef",currentOrder:r!=="chef",history:r!=="chef",report:r==="owner",editReport:r==="owner",alert:!0,menu:r==="owner",emp:r==="owner",editOrder:r!=="chef",cancelOrder:r!=="chef",store:r==="owner"}}else d.perms={pos:r!=="chef",currentOrder:r!=="chef",history:r!=="chef",report:r==="owner",editReport:r==="owner",alert:!0,menu:r==="owner",emp:r==="owner",editOrder:r!=="chef",cancelOrder:r!=="chef",store:r==="owner"};let ref=editingEmpKey?db.ref("employees/"+editingEmpKey):db.ref("employees").push();ref.update(d).then(()=>{showToast("บันทึกสำเร็จ");closeModal("emp-editor-modal")})};window.deleteEmployee=k=>{showConfirmModal("ลบพนักงาน","แน่ใจหรือไม่?",()=>db.ref("employees/"+k).remove())};window.openSelfEdit=()=>{tempSelectedTheme=localStorage.getItem("aa_theme")||"dark";$("self-pfp-preview").src=$("current-user-img").src;$("self-edit-modal").style.display="flex";toggleSideMenu()};window.saveSelfProfile=()=>{let pic=$("self-pfp-preview").src;if(getUserRoleLevel()===100)db.ref("admin_settings/profile_pic").set(pic);else if(currentUser){let e=globalEmployees.find(x=>x.username===currentUser);if(e)db.ref("employees/"+e.key+"/photo").set(pic)}localStorage.setItem("aa_theme",tempSelectedTheme);showToast("บันทึกโปรไฟล์แล้ว");closeModal("self-edit-modal");location.reload()};window.openStoreSettings=()=>{if(!getPerms().store)return;tempSelectedTheme=globalTheme;document.querySelectorAll(".theme-card-ui").forEach(c=>{c.classList.remove("active");if(c.dataset.theme===globalTheme)c.classList.add("active")});$("st-name").value=$("main-store-name").innerText;$("st-tables").value=globalNumTables;$("st-logo-preview").src=initLogo;$("admin-qr-preview").src=globalStoreQR||"https://cdn-icons-png.flaticon.com/512/1341/1341632.png";if(getUserRoleLevel()===100){$("admin-license-section").classList.remove("hidden");$("st-expiry-date").innerText=new Date(licenseData.expiry).toLocaleString("th-TH");$("st-lic-price").value=licenseData.price||300;$("st-lic-days").value=licenseData.days||30;$("lic-active-toggle").checked=licenseData.active}$("store-settings-modal").style.display="flex";toggleSideMenu()};window.toggleLicenseStatus=el=>{db.ref("admin_settings/license/active").set(el.checked).then(()=>showToast(el.checked?"เปิดระบบแล้ว":"ปิดระบบแล้ว"))};window.resetLicense=()=>{showConfirmModal("รีเซ็ตเวลา","แน่ใจหรือไม่?",()=>{db.ref("admin_settings/license/expiry").set(0).then(()=>showToast("รีเซ็ตเวลาแล้ว"))})};window.addLicenseDays=()=>{let p=parseFloat($("st-lic-price").value)||0,d=parseInt($("st-lic-days").value)||0;if(d<=0)return showToast("จำนวนวันต้อง > 0");let c=licenseData.expiry>Date.now()?licenseData.expiry:Date.now(),n=c+d*864e5;db.ref("admin_settings/license").update({expiry:n,price:p,days:d}).then(()=>{showToast("✅ ต่ออายุสำเร็จ");$("st-expiry-date").innerText=new Date(n).toLocaleString("th-TH")})};window.setTrialMins=()=>{let d=parseInt($("st-trial-mins").value)||0;if(d<=0)return showToast("จำนวนนาทีต้อง > 0");let n=Date.now()+d*6e4;db.ref("admin_settings/license").update({expiry:n}).then(()=>{showToast("✅ ตั้งค่าทดลองใช้สำเร็จ");$("st-expiry-date").innerText=new Date(n).toLocaleString("th-TH")})};window.expireImmediately=()=>{db.ref("admin_settings/license/expiry").set(Date.now()-1000).then(()=>{showToast("⚠️ ปรับให้หมดเวลาทันทีแล้ว");licenseData.expiry=Date.now()-1000;if($("st-expiry-date"))$("st-expiry-date").innerText=new Date(licenseData.expiry).toLocaleString("th-TH");closeModal('store-settings-modal');checkLicense()})};window.saveStoreSettings=()=>{let n=$("st-name").value.trim(),tb=parseInt($("st-tables").value)||6;if(!n)return;let up={store_name:n,num_tables:tb,theme:tempSelectedTheme},logo=$("st-logo-preview");if(logo.src&&logo.src.startsWith("data:")&&logo.src!==initLogo){let c=document.createElement("canvas"),w=logo.naturalWidth||logo.width,h=logo.naturalHeight||logo.height;if(w>h){if(w>800){h*=800/w;w=800}}else if(h>800){w*=800/h;h=800}c.width=w;c.height=h;c.getContext("2d").drawImage(logo,0,0,w,h);up.store_logo=c.toDataURL("image/png",.8)}let qr=$("admin-qr-preview");if(qr.src&&qr.src.startsWith("data:")&&!qr.src.includes("flaticon")){let c=document.createElement("canvas"),w=qr.naturalWidth||qr.width,h=qr.naturalHeight||qr.height;if(w>h){if(w>800){h*=800/w;w=800}}else if(h>800){w*=800/h;h=800}c.width=w;c.height=h;c.getContext("2d").drawImage(qr,0,0,w,h);up.qr_code=c.toDataURL("image/png",.8)}db.ref("admin_settings").update(up).then(()=>{showToast("✨ บันทึกการตั้งค่าร้านสำเร็จ!");closeModal("store-settings-modal")})};window.selectThemeUI=(t,el)=>{tempSelectedTheme=t;document.querySelectorAll(".theme-card-ui").forEach(c=>c.classList.remove("active"));el.classList.add("active");applyTheme(t)};window.handlePhotoPreview = (inp, id) => {
@@ -87,9 +106,13 @@ function renderFoodDetailModal(){
     if(!currentModalItem)return;
     $("detail-name").innerText=currentModalItem.name;
     $("detail-desc").innerText=currentModalItem.desc||"";
-    let sp=currentModalItem.price||0;
-    if(currentModalItem.optGroups)currentModalItem.optGroups.forEach(og=>og.items.forEach(it=>{if(it.def)sp=it.p}));
-    $("detail-base-price").innerText=sp+" ฿";
+    
+    // --- เปลี่ยน HTML ด้านบนให้เป็น "ราคารวม" ---
+    let basePriceContainer = $("detail-base-price").parentElement;
+    if(basePriceContainer) {
+        basePriceContainer.innerHTML = '<span class="text-zinc-300 font-bold text-lg">ราคารวม</span><span class="text-yellow-500 font-black text-2xl" id="detail-base-price">0 ฿</span>';
+    }
+    
     $("detail-qty").innerText=currentModalQty;
     $("detail-img").src=currentModalItem.img||BLANK_IMG;
     let h="";
@@ -99,8 +122,11 @@ function renderFoodDetailModal(){
             let a=g.items?g.items.filter(i=>i.active!==!1):[];
             if(a.length>0){
                 let defIdx=a.findIndex(i=>i.def);
-                currentSelectedOpts[x]=defIdx!==-1?[defIdx]:[]; 
-                let stepText = g.stepEnable ? `<span class="text-[10px] bg-blue-500/20 text-blue-400 border border-blue-500/30 px-2 py-0.5 rounded ml-1">คิดเงินตามจำนวนชิ้น</span>` : "";
+                currentSelectedOpts[x]=defIdx!==-1?[defIdx]:[];
+                
+                // ซ่อนคำว่า "คิดเงินตามจำนวนชิ้น" ตามที่ลูกค้าต้องการ
+                let stepText = ""; 
+                
                 h+=`<div class="mb-4"><div class="text-zinc-400 text-xs mb-2 pl-1">${g.name} ${g.multiSelect?'<span class="text-[10px] bg-yellow-500/20 text-yellow-500 px-2 py-0.5 rounded ml-1">เลือกได้หลายอย่าง</span>':''} ${g.requireOne?'<span class="text-[10px] bg-red-500/20 text-red-500 border border-red-500/30 px-2 py-0.5 rounded ml-1">* จำเป็นต้องเลือก</span>':''} ${stepText}</div><div class="grid grid-cols-2 gap-2">`;
                 a.forEach((i,y)=>{
                     let priceVal = parseFloat(i.p) || 0;
@@ -125,9 +151,7 @@ function renderPOSFoodDetail(){
     currentModalItem=globalGroups[currentModalCategory]?.[currentModalIndex];
     if(!currentModalItem)return;
     $("pos-detail-name").innerText=currentModalItem.name;
-    let sp=currentModalItem.price||0;
-    if(currentModalItem.optGroups)currentModalItem.optGroups.forEach(og=>og.items.forEach(it=>{if(it.def)sp=it.p}));
-    $("pos-detail-base-price").innerText=sp+" ฿";
+    
     $("pos-detail-qty").innerText=currentModalQty;
     let h="";
     currentSelectedOpts={};
@@ -137,7 +161,10 @@ function renderPOSFoodDetail(){
             if(a.length>0){
                 let defIdx=a.findIndex(i=>i.def);
                 currentSelectedOpts[x]=defIdx!==-1?[defIdx]:[];
-                let stepText = g.stepEnable ? `<span class="text-[10px] bg-blue-500/20 text-blue-400 border border-blue-500/30 px-2 py-0.5 rounded ml-1">คิดเงินตามจำนวนชิ้น</span>` : "";
+                
+                // ซ่อนคำว่า "คิดเงินตามจำนวนชิ้น" ในหน้า POS ด้วย
+                let stepText = ""; 
+                
                 h+=`<div class="mb-4"><div class="text-zinc-400 text-xs mb-2 pl-1">${g.name} ${g.multiSelect?'<span class="text-[10px] bg-yellow-500/20 text-yellow-500 px-2 py-0.5 rounded ml-1">เลือกได้หลายอย่าง</span>':''} ${g.requireOne?'<span class="text-[10px] bg-red-500/20 text-red-500 border border-red-500/30 px-2 py-0.5 rounded ml-1">* จำเป็นต้องเลือก</span>':''} ${stepText}</div><div class="grid grid-cols-2 gap-2">`;
                 a.forEach((i,y)=>{
                     let priceVal = parseFloat(i.p) || 0;
@@ -208,10 +235,7 @@ window.selectDetailOption=(x,y)=>{
     calcDetailTotal()
 };
 function calcDetailTotal(){
-    // 1. ดึงราคาเริ่มต้นของก๋วยเตี๋ยว (เช่น 70 บาท)
     let bp = parseFloat(currentModalItem.price || 0); 
-    
-    // หากมีการตั้งค่าตัวเลือกเริ่มต้น (Default) ให้ใช้ราคานั้นเป็นตัวตั้งต้น
     if(currentModalItem.optGroups) {
         currentModalItem.optGroups.forEach((g, x) => {
             g.items.forEach(it => {
@@ -220,36 +244,29 @@ function calcDetailTotal(){
         });
     }
 
-    let extraPrice = 0; // ตัวแปรเก็บราคาที่ต้องบวกเพิ่ม
+    let extraPrice = 0;
 
     if(currentModalItem.optGroups){
         Object.keys(currentSelectedOpts).forEach(x=>{
-            let jArr = currentSelectedOpts[x]; // รายการที่ลูกค้าเลือกในกลุ่มนี้
+            let jArr = currentSelectedOpts[x];
             if(jArr && jArr.length > 0){
                 let grp = currentModalItem.optGroups[x];
                 let activeItems = grp.items.filter(i => i.active !== false);
                 
-                // ตรวจสอบว่ากลุ่มนี้ใช้ "ราคาตามตัวเลือก (Step Pricing)" หรือไม่
                 if(grp.stepEnable && grp.stepRules && grp.stepRules.length > 0) {
-                    let selCount = jArr.length; // จำนวนที่ลูกค้าเลือก
-                    
-                    // เรียงเงื่อนไขจากน้อยไปมาก (เช่น 2, 3, 4 ชิ้น)
+                    let selCount = jArr.length; 
                     let sortedRules = [...grp.stepRules].sort((a, b) => a.q - b.q);
                     let matchedExtra = 0;
                     
-                    // วนลูปหาเงื่อนไขที่ตรงกับจำนวนที่เลือก
-                    // ตัวอย่าง: ถ้าเลือก 3 อย่าง ให้หาว่ากติกา "ไม่เกิน 3 อย่าง" คือราคาเท่าไหร่
                     for(let r of sortedRules) {
                         if(selCount <= r.q) {
                             matchedExtra = parseFloat(r.p || 0);
                             break;
                         }
-                        // ถ้าเลือกเกินกว่าจำนวนที่ระบุไว้สูงสุดในกติกา ให้ใช้ราคาของกติกาอันสุดท้าย
                         matchedExtra = parseFloat(r.p || 0); 
                     }
                     extraPrice += matchedExtra;
                 } else {
-                    // หากไม่ได้ใช้ Step Pricing ให้บวกราคาทุกตัวที่เลือกตามปกติ
                     jArr.forEach(y => {
                         extraPrice += parseFloat(activeItems[y].p || 0);
                     });
@@ -258,12 +275,19 @@ function calcDetailTotal(){
         });
     }
 
-    // ราคารวม = ราคาเริ่มต้น + ราคาที่บวกเพิ่ม
     let total = bp + extraPrice;
     
-    // แสดงผลราคา
+    // แสดงผลราคาด้านล่าง
     if($("detail-total-price")) $("detail-total-price").innerText = (total * currentModalQty) + " ฿";
     if($("pos-detail-total-price")) $("pos-detail-total-price").innerText = (total * currentModalQty) + " ฿";
+    
+    // อัปเดตราคาด้านบนด้วยให้ตรงกันแบบ Real-time
+    if($("detail-base-price")) $("detail-base-price").innerText = (total * currentModalQty) + " ฿";
+    // ในหน้า POS เอาให้ตรงกันด้วย
+    if($("pos-detail-base-price")) {
+        $("pos-detail-base-price").innerText = "ราคารวม " + (total * currentModalQty) + " ฿";
+        $("pos-detail-base-price").className = "text-yellow-500 font-bold text-lg";
+    }
 }
 window.addToCart=()=>{
     // ---- ด่านเช็คการบังคับเลือก ----
@@ -592,4 +616,46 @@ window.saveMenu=()=>{
         closeModal("menu-editor-modal");
     });
 };window.renderEmployeeList=()=>{let l=$("employee-list");l.innerHTML="";if(globalEmployees.length===0)return l.innerHTML="<p class='text-center text-zinc-600'>ไม่มีข้อมูลพนักงาน</p>";globalEmployees.forEach(e=>{let d=document.createElement("div");d.className="flex items-center gap-4 bg-zinc-900/50 p-4 rounded-2xl border border-zinc-800 mb-2";let r=ROLE_LABELS[e.role]||e.role,c=getUserRoleLevel()>=(ROLES[e.role]||0);d.innerHTML=`<img src="${e.photo||"https://cdn-icons-png.flaticon.com/512/149/149071.png"}" class="w-12 h-12 rounded-full object-cover"><div class="flex-1"><div class="font-bold text-white">${e.username}</div><div class="text-xs text-yellow-500">${r}</div><div class="text-xs text-zinc-500">PW: ${e.password}</div></div><div class="flex gap-2">${c?`<button onclick="openEmployeeEditor('${e.key}','${encodeURIComponent(JSON.stringify(e))}')" class="text-yellow-500 p-2 hover:bg-zinc-800 rounded-lg transition"><span class="material-symbols-outlined">edit</span></button><button onclick="deleteEmployee('${e.key}')" class="text-red-500 p-2 hover:bg-zinc-800 rounded-lg transition"><span class="material-symbols-outlined">delete</span></button>`:""}</div>`;l.appendChild(d)})};
+// ฟังก์ชันอ่านออกเสียงรายการอาหารให้พ่อครัวฟัง
+// ฟังก์ชันอ่านออกเสียงรายการอาหารให้พ่อครัวฟัง (อัปเดตใหม่: ชัดเจน ช้าลง ดังสุด)
+window.playOrderAudio = (orderKey, itemIndex) => {
+    // เช็คว่าเบราว์เซอร์รองรับการอ่านออกเสียงไหม
+    if ('speechSynthesis' in window) {
+        let order = allStaffOrders.find(o => o.key === orderKey);
+        if(!order || !order.items || !order.items[itemIndex]) return;
+        
+        let item = order.items[itemIndex];
+        
+        // สั่งหยุดเสียงเก่าก่อน (เผื่อพ่อครัวกดรัวๆ จะได้ไม่พูดซ้อนกัน)
+        window.speechSynthesis.cancel(); 
+        
+        // จัดรูปประโยคที่จะให้อ่าน (เพิ่มลูกน้ำ "," เข้าไปเพื่อให้ AI เว้นจังหวะหายใจ จะได้ฟังชัดขึ้น)
+        let optText = (item.option && item.option !== 'ปกติ') ? " เพิ่มเติม, " + item.option : '';
+        let textToRead = item.name + optText + ", จำนวน, " + item.qty + ", ที่";
+        
+        // สร้างคำสั่งเสียง
+        let msg = new SpeechSynthesisUtterance(textToRead);
+        msg.lang = 'th-TH'; // ตั้งค่าเป็นภาษาไทย
+        
+        // --- ส่วนที่ปรับแต่งให้ตรงใจ ---
+        msg.volume = 1.0;   // 🔊 ปรับความดังสูงสุด (ค่า 0.0 ถึง 1.0)
+        msg.rate = 0.65;    // 🐢 ปรับให้ช้าลงอีก (ค่าเดิม 0.85, ลดลงยิ่งช้า, 1.0 คือปกติ)
+        msg.pitch = 1.0;    // 🎵 ระดับเสียงปกติ (ไม่แหลมหรือทุ้มเกินไป)
+
+        // (ตัวช่วยเสริม) พยายามเลือกเสียงภาษาไทยที่ชัดที่สุดในเครื่อง (เช่น Google Voice)
+        let voices = window.speechSynthesis.getVoices();
+        let thaiVoice = voices.find(voice => voice.lang === 'th-TH' && voice.name.includes('Google'));
+        if (!thaiVoice) {
+            thaiVoice = voices.find(voice => voice.lang === 'th-TH'); // ถ้าไม่มีของ Google ให้เอาเสียงไทยอะไรก็ได้
+        }
+        if (thaiVoice) {
+            msg.voice = thaiVoice;
+        }
+        
+        // สั่งให้พูดเลย!
+        window.speechSynthesis.speak(msg);
+    } else {
+        showToast("⚠️ เครื่องนี้ไม่รองรับระบบอ่านออกเสียงครับ");
+    }
+};
 </script></body></html>
