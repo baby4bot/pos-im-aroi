@@ -235,17 +235,9 @@ window.selectDetailOption=(x,y)=>{
     calcDetailTotal()
 };
 function calcDetailTotal(){
-    let bp = parseFloat(currentModalItem.price || 0); 
-    if(currentModalItem.optGroups) {
-        currentModalItem.optGroups.forEach((g, x) => {
-            g.items.forEach(it => {
-                if(it.def) bp = parseFloat(it.p || 0);
-            });
-        });
-    }
-
-    let extraPrice = 0;
-
+    // 1. เริ่มต้นที่ราคาหลักของเมนู (เช่น ก๋วยเตี๋ยว 70 บาท)
+    let total = parseFloat(currentModalItem.price || 0); 
+    
     if(currentModalItem.optGroups){
         Object.keys(currentSelectedOpts).forEach(x=>{
             let jArr = currentSelectedOpts[x];
@@ -253,11 +245,11 @@ function calcDetailTotal(){
                 let grp = currentModalItem.optGroups[x];
                 let activeItems = grp.items.filter(i => i.active !== false);
                 
+                // 2. ถ้าเป็นหมวดหมู่แบบ "ราคาเหมาตามจำนวนชิ้น" (Step Rules)
                 if(grp.stepEnable && grp.stepRules && grp.stepRules.length > 0) {
                     let selCount = jArr.length; 
                     let sortedRules = [...grp.stepRules].sort((a, b) => a.q - b.q);
                     let matchedExtra = 0;
-                    
                     for(let r of sortedRules) {
                         if(selCount <= r.q) {
                             matchedExtra = parseFloat(r.p || 0);
@@ -265,25 +257,22 @@ function calcDetailTotal(){
                         }
                         matchedExtra = parseFloat(r.p || 0); 
                     }
-                    extraPrice += matchedExtra;
-                } else {
+                    total += matchedExtra; // เอามาบวกเพิ่ม!
+                } 
+                // 3. ถ้าเป็นหมวดหมู่ตัวเลือกปกติ (เช่น พิเศษ, ไข่ดาว, หมูสับ)
+                else {
                     jArr.forEach(y => {
-                        extraPrice += parseFloat(activeItems[y].p || 0);
+                        total += parseFloat(activeItems[y].p || 0); // เอามาบวกเพิ่ม!
                     });
                 }
             }
         });
     }
-
-    let total = bp + extraPrice;
     
-    // แสดงผลราคาด้านล่าง
+    // 4. แสดงผลออกหน้าจอ (อัปเดตทุกจุดให้ตรงกัน)
     if($("detail-total-price")) $("detail-total-price").innerText = (total * currentModalQty) + " ฿";
     if($("pos-detail-total-price")) $("pos-detail-total-price").innerText = (total * currentModalQty) + " ฿";
-    
-    // อัปเดตราคาด้านบนด้วยให้ตรงกันแบบ Real-time
     if($("detail-base-price")) $("detail-base-price").innerText = (total * currentModalQty) + " ฿";
-    // ในหน้า POS เอาให้ตรงกันด้วย
     if($("pos-detail-base-price")) {
         $("pos-detail-base-price").innerText = "ราคารวม " + (total * currentModalQty) + " ฿";
         $("pos-detail-base-price").className = "text-yellow-500 font-bold text-lg";
@@ -298,30 +287,53 @@ window.addToCart=()=>{
                 let selected = currentSelectedOpts[x];
                 if(!selected || selected.length === 0){
                     showToast(`⚠️ กรุณาเลือก "${g.name}" อย่างน้อย 1 อย่าง`);
-                    return; // ยกเลิก! ไม่ให้ผ่านลงตะกร้า
+                    return; 
                 }
             }
         }
     }
-    // ----------------------------
 
-    let bp=parseFloat(currentModalItem.price||0),op=0,s=[];
+    // 1. เริ่มต้นที่ราคาหลักของเมนู (บวกตรงๆ ไม่มีการแทนที่ราคาแล้ว)
+    let p = parseFloat(currentModalItem.price || 0);
+    let s = []; // เก็บชื่อตัวเลือก
+    
     if(currentModalItem.optGroups){
         Object.keys(currentSelectedOpts).forEach(x=>{
             let jArr=currentSelectedOpts[x];
             if(jArr&&jArr.length>0){
-                let a=currentModalItem.optGroups[x].items.filter(i=>i.active!==!1);
-                jArr.forEach(y => {
-                    let item = a[y];
-                    op+=parseFloat(item.p||0);
-                    if(item.n!=="ธรรมดา"&&item.n!=="ปกติ"&&item.n!=="ไม่รับ")s.push(item.n);
-                });
+                let grp = currentModalItem.optGroups[x];
+                let a = grp.items.filter(i=>i.active!==!1);
+
+                // 2. ถ้าเป็นเงื่อนไขราคาเหมา
+                if(grp.stepEnable && grp.stepRules && grp.stepRules.length > 0) {
+                    let selCount = jArr.length;
+                    let sortedRules = [...grp.stepRules].sort((A, B) => A.q - B.q);
+                    let matchedExtra = 0;
+                    for(let r of sortedRules) {
+                        if(selCount <= r.q) { matchedExtra = parseFloat(r.p || 0); break; }
+                        matchedExtra = parseFloat(r.p || 0);
+                    }
+                    p += matchedExtra; // บวกเพิ่มเข้าไป
+                    
+                    jArr.forEach(y => {
+                        let item = a[y];
+                        if(item.n!=="ธรรมดา"&&item.n!=="ปกติ"&&item.n!=="ไม่รับ") s.push(item.n);
+                    });
+                } 
+                // 3. ถ้าเป็นตัวเลือกปกติ (เช่น พิเศษ)
+                else {
+                    jArr.forEach(y => {
+                        let item = a[y];
+                        p += parseFloat(item.p || 0); // บวกเพิ่มเข้าไป
+                        if(item.n!=="ธรรมดา"&&item.n!=="ปกติ"&&item.n!=="ไม่รับ") s.push(item.n);
+                    });
+                }
             }
         });
     }
-    let p=currentModalItem.priceReplace?op:bp+op;
-    if(currentModalItem.priceReplace&&op===0)p=bp;
-    let o=s.length>0?s.join(", "):"ปกติ";
+    
+    let o = s.length>0 ? s.join(", ") : "ปกติ";
+    
     if(currentAddMode==="edit"){
         if(!editingOrderData.items)editingOrderData.items=[];
         editingOrderData.items.push({key:currentModalItem.key,name:currentModalItem.name,option:o,price:p,img:currentModalItem.img,qty:currentModalQty,served:!1});
@@ -331,16 +343,17 @@ window.addToCart=()=>{
         renderEditOrderItems();
         $("edit-order-modal").style.display="flex"
     }else{
-        let c=isPOSMode?posCart:cart,e=c.find(i=>i.key===currentModalItem.key&&i.option===o);
-        if(e)e.qty+=currentModalQty;
+        let c=isPOSMode?posCart:cart, e=c.find(i=>i.key===currentModalItem.key&&i.option===o);
+        if(e) e.qty+=currentModalQty;
         else c.push({key:currentModalItem.key,name:currentModalItem.name,option:o,price:p,img:currentModalItem.img,qty:currentModalQty});
         showToast("✅ เพิ่มรายการแล้ว");
         closeModal("food-detail-modal");
         closeModal("pos-food-detail-modal");
-        if(isPOSMode)renderPOSCart();
-        else updateCartUI()
+        if(isPOSMode) renderPOSCart();
+        else updateCartUI();
     }
-};window.addPOSItemToCart=()=>addToCart();function updateCartUI(){let c=cart.reduce((s,i)=>s+i.qty,0),b=$("cart-count");if(c>0){b.innerText=c;b.classList.remove("hidden")}else{b.classList.add("hidden");closeModal("cart-modal")}}window.openCartModal=()=>{if(cart.length===0)return showToast("ตะกร้าว่างเปล่า");$("cart-table-grid").innerHTML=getTableHTML(currentCartTable,"cart");renderCart();$("cart-modal").style.display="flex"};window.selectcartTable=t=>{currentCartTable=t;document.querySelectorAll(".cart-tbl-btn").forEach(b=>{b.classList.remove("bg-yellow-500","text-black");b.classList.add("bg-zinc-900","text-white")});$("cart-tbl-"+t).classList.add("bg-yellow-500","text-black");$("cart-tbl-"+t).classList.remove("bg-zinc-900","text-white")};function renderCart(){let c=$("cart-items-container");c.innerHTML="";let t=0;cart.forEach((i,x)=>{t+=i.price*i.qty;c.innerHTML+=`<div class="flex items-center justify-between bg-zinc-900 p-3 rounded-xl border border-zinc-700 shadow-sm"><div class="flex items-center gap-3 flex-1 overflow-hidden pr-2"><img src="${i.img||BLANK_IMG}" class="w-14 h-14 rounded-lg object-cover border border-zinc-700 flex-shrink-0" /><div class="truncate"><div class="text-white font-bold truncate">${i.name}</div><div class="text-zinc-400 text-xs">${i.option} - ${i.price} ฿</div></div></div><div class="flex items-center gap-2"><button onclick="changeQty(${x},-1)" class="w-7 h-7 bg-zinc-700 rounded-full flex items-center justify-center text-white font-bold">-</button><span class="text-white font-bold w-5 text-center">${i.qty}</span><button onclick="changeQty(${x},1)" class="w-7 h-7 bg-zinc-700 rounded-full flex items-center justify-center text-white font-bold">+</button><button onclick="cart.splice(${x},1);updateCartUI();renderCart();" class="w-8 h-8 bg-red-900/30 rounded-lg flex items-center justify-center text-red-500 hover:bg-red-500 hover:text-white transition"><span class="material-symbols-outlined text-[18px]">delete</span></button></div></div>`});$("cart-total").innerText=t+" ฿"}window.changeQty=(x,a)=>{cart[x].qty+=a;if(cart[x].qty<=0)cart.splice(x,1);updateCartUI();if(cart.length>0)renderCart()};window.checkout=()=>{if(!currentCartTable)return showToast("⚠️ กรุณาเลือกโต๊ะ");let t=cart.reduce((s,i)=>s+i.price*i.qty,0),n=new Date,d=n.toLocaleDateString("th-TH")+" "+n.toLocaleTimeString("th-TH"),o={customerName:"โต๊ะ "+currentCartTable,items:cart,total:t,status:"pending",timestamp:firebase.database.ServerValue.TIMESTAMP,dateStr:d},r=db.ref("orders").push();r.set(o).then(()=>{showToast("✅ ส่งออเดอร์เข้าครัวสำเร็จ!");closeModal("cart-modal");generateReceipt(o,r.key,!0);cart=[];updateCartUI();currentCartTable=null})};function generateReceipt(o,k,n=!0){if($("r-cust"))$("r-cust").innerText=o.customerName;if($("r-date"))$("r-date").innerText=o.dateStr;if($("r-id"))$("r-id").innerText=k;if($("r-total"))$("r-total").innerText=o.total;let h="";o.items.forEach(i=>{h+=`<tr style="border-bottom:1px solid #aaa"><td style="padding:8px 0;font-weight:700;color:#000">${i.qty}x ${i.name} <br><span style="font-size:14px;color:#333">(${i.option})</span></td><td style="text-align:right;font-weight:700;color:#000">${i.price*i.qty}</td></tr>`});if($("r-items"))$("r-items").innerHTML=h;html2canvas($("receipt-html-container"),{scale:2,useCORS:!0}).then(c=>{if($("receipt-image"))$("receipt-image").src=c.toDataURL("image/jpeg",.9);$("receipt-modal").style.display="flex"})}window.showReceiptFromOrder=s=>{let o=JSON.parse(decodeURIComponent(s));generateReceipt(o,o.key,!1)};
+};
+window.addPOSItemToCart=()=>addToCart();function updateCartUI(){let c=cart.reduce((s,i)=>s+i.qty,0),b=$("cart-count");if(c>0){b.innerText=c;b.classList.remove("hidden")}else{b.classList.add("hidden");closeModal("cart-modal")}}window.openCartModal=()=>{if(cart.length===0)return showToast("ตะกร้าว่างเปล่า");$("cart-table-grid").innerHTML=getTableHTML(currentCartTable,"cart");renderCart();$("cart-modal").style.display="flex"};window.selectcartTable=t=>{currentCartTable=t;document.querySelectorAll(".cart-tbl-btn").forEach(b=>{b.classList.remove("bg-yellow-500","text-black");b.classList.add("bg-zinc-900","text-white")});$("cart-tbl-"+t).classList.add("bg-yellow-500","text-black");$("cart-tbl-"+t).classList.remove("bg-zinc-900","text-white")};function renderCart(){let c=$("cart-items-container");c.innerHTML="";let t=0;cart.forEach((i,x)=>{t+=i.price*i.qty;c.innerHTML+=`<div class="flex items-center justify-between bg-zinc-900 p-3 rounded-xl border border-zinc-700 shadow-sm"><div class="flex items-center gap-3 flex-1 overflow-hidden pr-2"><img src="${i.img||BLANK_IMG}" class="w-14 h-14 rounded-lg object-cover border border-zinc-700 flex-shrink-0" /><div class="truncate"><div class="text-white font-bold truncate">${i.name}</div><div class="text-zinc-400 text-xs">${i.option} - ${i.price} ฿</div></div></div><div class="flex items-center gap-2"><button onclick="changeQty(${x},-1)" class="w-7 h-7 bg-zinc-700 rounded-full flex items-center justify-center text-white font-bold">-</button><span class="text-white font-bold w-5 text-center">${i.qty}</span><button onclick="changeQty(${x},1)" class="w-7 h-7 bg-zinc-700 rounded-full flex items-center justify-center text-white font-bold">+</button><button onclick="cart.splice(${x},1);updateCartUI();renderCart();" class="w-8 h-8 bg-red-900/30 rounded-lg flex items-center justify-center text-red-500 hover:bg-red-500 hover:text-white transition"><span class="material-symbols-outlined text-[18px]">delete</span></button></div></div>`});$("cart-total").innerText=t+" ฿"}window.changeQty=(x,a)=>{cart[x].qty+=a;if(cart[x].qty<=0)cart.splice(x,1);updateCartUI();if(cart.length>0)renderCart()};window.checkout=()=>{if(!currentCartTable)return showToast("⚠️ กรุณาเลือกโต๊ะ");let t=cart.reduce((s,i)=>s+i.price*i.qty,0),n=new Date,d=n.toLocaleDateString("th-TH")+" "+n.toLocaleTimeString("th-TH"),o={customerName:"โต๊ะ "+currentCartTable,items:cart,total:t,status:"pending",timestamp:firebase.database.ServerValue.TIMESTAMP,dateStr:d},r=db.ref("orders").push();r.set(o).then(()=>{showToast("✅ ส่งออเดอร์เข้าครัวสำเร็จ!");closeModal("cart-modal");generateReceipt(o,r.key,!0);cart=[];updateCartUI();currentCartTable=null})};function generateReceipt(o,k,n=!0){if($("r-cust"))$("r-cust").innerText=o.customerName;if($("r-date"))$("r-date").innerText=o.dateStr;if($("r-id"))$("r-id").innerText=k;if($("r-total"))$("r-total").innerText=o.total;let h="";o.items.forEach(i=>{h+=`<tr style="border-bottom:1px solid #aaa"><td style="padding:8px 0;font-weight:700;color:#000">${i.qty}x ${i.name} <br><span style="font-size:14px;color:#333">(${i.option})</span></td><td style="text-align:right;font-weight:700;color:#000">${i.price*i.qty}</td></tr>`});if($("r-items"))$("r-items").innerHTML=h;html2canvas($("receipt-html-container"),{scale:2,useCORS:!0}).then(c=>{if($("receipt-image"))$("receipt-image").src=c.toDataURL("image/jpeg",.9);$("receipt-modal").style.display="flex"})}window.showReceiptFromOrder=s=>{let o=JSON.parse(decodeURIComponent(s));generateReceipt(o,o.key,!1)};
 function getAllUniqueOptions(){
     let m={};
     rawMenuData.forEach(i=>{
