@@ -348,34 +348,41 @@ window.addOptGroupRow=(n="",i=[],m=!1,req=!1, stepEnable=!1, stepRules=[])=>{
         });
     }
     
-    d.innerHTML=`<div class="flex items-center justify-between mb-2">
-        <div class="flex items-center gap-2 flex-1 pr-2 flex-wrap">
-            <span class="material-symbols-outlined text-zinc-500 cursor-grab group-drag-handle text-xl">drag_indicator</span>
-            <input type="text" class="g-name flex-1 min-w-[120px] bg-black text-yellow-500 border border-zinc-700 rounded-lg px-3 py-2 text-sm font-bold outline-none" placeholder="ชื่อกลุ่ม" value="${n}">
-            
-            <label class="flex items-center gap-1 cursor-pointer bg-black px-2 py-1.5 rounded-lg border border-zinc-800">
-                <input type="checkbox" class="g-multi w-4 h-4 accent-yellow-500 cursor-pointer" ${m?"checked":""}>
-                <span class="text-[11px] text-zinc-400 font-bold">เลือกหลายอย่าง</span>
-            </label>
+    d.innerHTML=`
+    <div class="flex flex-col mb-2">
+        <div class="flex items-center gap-2 w-full">
+            <span class="material-symbols-outlined text-zinc-500 cursor-grab group-drag-handle text-xl shrink-0">drag_indicator</span>
+            <input type="text" class="g-name flex-1 bg-black text-yellow-500 border border-zinc-700 rounded-lg px-3 py-2 text-sm font-bold outline-none" placeholder="ชื่อกลุ่ม (เช่น ท็อปปิ้ง)" value="${n}">
+            <button onclick="this.closest('.opt-group').remove()" class="text-zinc-500 hover:text-red-500 p-2 bg-black rounded-lg border border-zinc-800 shrink-0" title="ลบกลุ่มนี้"><span class="material-symbols-outlined text-sm">delete</span></button>
+        </div>
+        
+        <div class="flex items-center gap-2 mt-2 flex-wrap pl-7">
             <label class="flex items-center gap-1 cursor-pointer bg-black px-2 py-1.5 rounded-lg border border-red-900/50">
                 <input type="checkbox" class="g-req w-4 h-4 accent-red-500 cursor-pointer" ${req?"checked":""}>
                 <span class="text-[11px] text-red-500 font-bold">บังคับเลือก</span>
             </label>
-            <label class="flex items-center gap-1 cursor-pointer bg-black px-2 py-1.5 rounded-lg border border-blue-900/50" onchange="this.nextElementSibling.style.display=this.querySelector('.g-step-en').checked?'block':'none'">
-                <input type="checkbox" class="g-step-en w-4 h-4 accent-blue-500 cursor-pointer" ${stepEnable?"checked":""}>
-                <span class="text-[11px] text-blue-400 font-bold">ราคาตามจำนวนชิ้น</span>
+            
+            <label class="flex items-center gap-1 cursor-pointer bg-black px-2 py-1.5 rounded-lg border border-zinc-800">
+                <input type="checkbox" class="g-multi w-4 h-4 accent-yellow-500 cursor-pointer" ${m?"checked":""}>
+                <span class="text-[11px] text-zinc-400 font-bold">เลือกได้หลายอย่าง</span>
             </label>
             
-            <div class="w-full bg-black/50 p-2 rounded-lg border border-zinc-800 mt-2 step-container" style="display:${stepEnable?'block':'none'}">
+            <label class="flex items-center gap-1 cursor-pointer bg-black px-2 py-1.5 rounded-lg border border-blue-900/50" onchange="this.nextElementSibling.style.display=this.querySelector('.g-step-en').checked?'block':'none'">
+                <input type="checkbox" class="g-step-en w-4 h-4 accent-blue-500 cursor-pointer" ${stepEnable?"checked":""}>
+                <span class="text-[11px] text-blue-400 font-bold">ราคาตามตัวเลือก</span>
+            </label>
+            
+            <div class="w-full bg-black/50 p-2 rounded-lg border border-zinc-800 mt-1 step-container" style="display:${stepEnable?'block':'none'}">
                 <div class="text-xs text-blue-400 mb-2 font-bold">ตั้งเงื่อนไข (เช่น: ไม่เกิน 2 ชิ้น +0฿ | ไม่เกิน 3 ชิ้น +10฿)</div>
                 <div class="step-list">${stepHtml}</div>
                 <button onclick="addStepRule(this)" class="mt-2 text-[10px] bg-blue-900/50 text-blue-400 px-2 py-1 rounded hover:text-white transition">+ เพิ่มเงื่อนไข</button>
             </div>
         </div>
-        <button onclick="this.closest('.opt-group').remove()" class="text-zinc-500 hover:text-red-500 p-2 bg-black rounded-lg border border-zinc-800 self-start"><span class="material-symbols-outlined text-sm">delete</span></button>
     </div>
-    <div class="g-items space-y-2 mb-2 pl-2" id="g-items-${g}"></div>
-    <div class="pl-2"><button onclick="addOptItemRow(${g})" class="text-xs bg-zinc-800 text-zinc-300 py-1.5 px-3 rounded-lg hover:text-white transition">+ เพิ่มตัวเลือก</button></div>`;
+    
+    <div class="g-items space-y-2 mb-2 pl-7" id="g-items-${g}"></div>
+    <div class="pl-7"><button onclick="addOptItemRow(${g})" class="text-xs bg-zinc-800 text-zinc-300 py-1.5 px-3 rounded-lg hover:text-white transition">+ เพิ่มตัวเลือก</button></div>`;
+    
     l.appendChild(d);
     if(i.length>0)i.forEach(x=>addOptItemRow(g,x.n,x.p,x.active,x.img,x.def));
     else addOptItemRow(g,"ธรรมดา",0,!0);
