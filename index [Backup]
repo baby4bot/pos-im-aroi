@@ -671,4 +671,923 @@ window.playOrderAudio = (orderKey, itemIndex) => {
         showToast("⚠️ เครื่องนี้ไม่รองรับระบบอ่านออกเสียงครับ");
     }
 };
+// ==========================================
+// ระบบจัดการสต๊อก (สินค้าหมด) รวดเร็วผ่านการคลิกขวา/กดค้าง
+// ==========================================
+
+// 1. ฉีดหน้าต่าง Modal ย่อยเข้าไปสำหรับจัดการตัวเลือก
+if(!document.getElementById('option-action-modal')) {
+    document.body.insertAdjacentHTML('beforeend', `
+    <div id="option-action-modal" class="admin-modal" style="z-index:99999" onclick="closeModal('option-action-modal')">
+        <div class="admin-modal-content !max-w-xs text-center border-2 border-zinc-700" onclick="event.stopPropagation()">
+            <h2 class="text-yellow-500 text-xl font-bold mb-4" id="opt-action-title">จัดการตัวเลือก</h2>
+            <div class="flex flex-col gap-3">
+                <button id="btn-opt-stock" class="w-full bg-red-600 text-white font-bold py-3 rounded-xl hover:bg-red-500 transition shadow-lg"></button>
+                <button id="btn-opt-def" class="w-full bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-500 transition shadow-lg">⭐ ตั้งเป็นราคาเริ่มต้น</button>
+                <button onclick="closeModal('option-action-modal')" class="w-full bg-zinc-800 text-zinc-300 font-bold py-3 rounded-xl hover:bg-zinc-700 transition mt-2">ยกเลิก</button>
+            </div>
+        </div>
+    </div>`);
+}
+
+// 2. ฟังก์ชันสลับสถานะ สินค้าหลัก (เมนู)
+window.toggleMenuStock = (e, key) => {
+    e.preventDefault();
+    if(!getPerms().menu) return; // เฉพาะแอดมินหรือเจ้าของ
+    let item = rawMenuData.find(m => m.key === key);
+    if(!item) return;
+    let newState = !item.outOfStock;
+    
+    showConfirmModal("จัดการสต๊อก", `ต้องการตั้งค่าให้ "${item.name}"\n${newState ? '👉 เปลี่ยนเป็น "สินค้าหมด" (ลูกค้าสั่งไม่ได้)' : '👉 เปิดเป็น "มีสินค้า" (สั่งได้ปกติ)'} ใช่หรือไม่?`, () => {
+        db.ref("menus/" + key).update({ outOfStock: newState }).then(() => {
+            showToast(newState ? "🔴 ตั้งเป็นสินค้าหมดแล้ว" : "🟢 เปิดให้สั่งปกติแล้ว");
+        });
+    });
+};
+
+// 3. ฟังก์ชันคลิกขวาที่ตัวเลือกย่อย
+window.handleOptionRightClick = (e, x, y) => {
+    e.preventDefault();
+    if(!getPerms().menu) return;
+    
+    let item = currentModalItem.optGroups[x].items[y];
+    document.getElementById('opt-action-title').innerText = "ตัวเลือก: " + item.n;
+    
+    let btnStock = document.getElementById('btn-opt-stock');
+    btnStock.innerHTML = item.outOfStock ? '<span class="material-symbols-outlined align-middle mr-1">check_circle</span> เปิดขายปกติ' : '<span class="material-symbols-outlined align-middle mr-1">block</span> ตั้งว่าสินค้าหมด';
+    btnStock.className = item.outOfStock ? "w-full bg-green-600 text-white font-bold py-3 rounded-xl hover:bg-green-500 transition shadow-lg" : "w-full bg-red-600 text-white font-bold py-3 rounded-xl hover:bg-red-500 transition shadow-lg";
+    
+    btnStock.onclick = () => {
+        closeModal('option-action-modal');
+        toggleOptionStock(x, y);
+    };
+    
+    document.getElementById('btn-opt-def').onclick = () => {
+        closeModal('option-action-modal');
+        setAsDefaultOptionDirect(x, y);
+    };
+    
+    document.getElementById('option-action-modal').style.display = 'flex';
+};
+
+// 4. ฟังก์ชันจัดการสลับสต๊อกตัวเลือกย่อย (เซฟลงฐานข้อมูล)
+window.toggleOptionStock = (x, y) => {
+    let targetItem = currentModalItem.optGroups[x].items[y];
+    let n = targetItem.n;
+    let newState = !targetItem.outOfStock;
+    
+    let ng = JSON.parse(JSON.stringify(currentModalItem.optGroups));
+    ng[x].items[y].outOfStock = newState; 
+    
+    // ถ้าตัวที่ตั้งว่าหมด ดันเป็นราคาเริ่มต้นอยู่ ให้ปลดราคาเริ่มต้นออกด้วย (กันบัค)
+    if(newState && ng[x].items[y].def) {
+        ng[x].items[y].def = false;
+    }
+    
+    db.ref("menus/" + currentModalItem.key).update({optGroups: ng}).then(() => {
+        showToast(newState ? `🔴 ตัวเลือก ${n} หมดชั่วคราว` : `🟢 ตัวเลือก ${n} สั่งได้แล้ว`);
+        currentModalItem.optGroups = ng;
+        if(currentAddMode==="pos" || currentAddMode==="edit") renderPOSFoodDetail();
+        else renderFoodDetailModal();
+    });
+};
+
+// 5. ฟังก์ชันตั้งราคาเริ่มต้น (ดัดแปลงจากของเดิมให้รองรับเมนูใหม่)
+window.setAsDefaultOptionDirect = (x, y) => {
+    let targetItem = currentModalItem.optGroups[x].items[y];
+    let n = targetItem.n;
+    if(targetItem.outOfStock) return showToast("⚠️ สินค้าหมด ไม่สามารถตั้งเป็นค่าเริ่มต้นได้");
+    
+    if(targetItem.def) {
+        showConfirmModal("ยกเลิกราคาเริ่มต้น",`ต้องการยกเลิก [${n}] ไม่ให้เป็นราคาเริ่มต้นใช่ไหม?`,()=>{
+            let ng=JSON.parse(JSON.stringify(currentModalItem.optGroups));
+            ng[x].items[y].def = false; 
+            db.ref("menus/"+currentModalItem.key).update({optGroups:ng}).then(()=>{
+                showToast("🗑️ ยกเลิกราคาเริ่มต้นแล้ว");
+                currentModalItem.optGroups=ng;
+                if(currentAddMode==="pos"||currentAddMode==="edit")renderPOSFoodDetail();
+                else renderFoodDetailModal();
+            });
+        });
+    } else {
+        showConfirmModal("ตั้งราคาเริ่มต้น",`ให้ [${n}] เป็นราคาเริ่มต้นใช่ไหม?`,()=>{
+            let ng=JSON.parse(JSON.stringify(currentModalItem.optGroups));
+            ng.forEach((g,gx)=>g.items.forEach((it,iy)=>it.def=(gx===x&&iy===y)));
+            let up={optGroups:ng};
+            if((currentModalItem.price||0)===0)up.priceReplace=!0;
+            db.ref("menus/"+currentModalItem.key).update(up).then(()=>{
+                showToast("✨ ตั้งเป็นราคาเริ่มต้นแล้ว");
+                currentModalItem.optGroups=ng;
+                if(currentAddMode==="pos"||currentAddMode==="edit")renderPOSFoodDetail();
+                else renderFoodDetailModal();
+            });
+        });
+    }
+};
+
+// ==========================================
+// ทับฟังก์ชันการแสดงผล UI เพื่อให้โชว์ป้าย "สินค้าหมด"
+// ==========================================
+
+// ป้องกันการกดเข้าเมนูที่หมดแล้ว (อัปเดตฟังก์ชันเปิด Modal)
+window.openFoodDetail = (c, i, n) => {
+    let item = globalGroups[n]?.[i];
+    if(item && item.outOfStock) {
+        return showToast("⚠️ สินค้านี้หมดชั่วคราว (แอดมินคลิกค้างเพื่อเปิดขาย)");
+    }
+    let s=document.querySelector(`.category-section[data-catindex="${c}"]`);
+    if(s&&s.classList.contains("jiggle-active"))return;
+    currentModalCategory=n; currentModalIndex=i; editingCartIndex=-1; currentModalQty=1; currentAddMode="cart";
+    renderFoodDetailModal(); $("food-detail-modal").style.display="flex";
+    if($("food-detail-scroll"))$("food-detail-scroll").scrollTop=0;
+};
+
+window.openPOSFoodDetail = (c, i, n, m="pos") => {
+    let item = globalGroups[n]?.[i];
+    if(item && item.outOfStock) {
+        return showToast("⚠️ สินค้านี้หมดชั่วคราว (คลิกค้างเพื่อเปิดขาย)");
+    }
+    currentAddMode=m; currentModalCategory=n; currentModalIndex=i; editingCartIndex=-1; currentModalQty=1;
+    renderPOSFoodDetail(); $("pos-food-detail-modal").style.display="flex";
+    if($("pos-detail-groups-container"))$("pos-detail-groups-container").scrollTop=0;
+};
+
+// ป้องกันการเลือกออปชันที่หมดแล้ว
+window.selectDetailOption = (x, y) => {
+    let group = currentModalItem.optGroups[x];
+    if (group.items[y].outOfStock) {
+        return showToast("⚠️ ตัวเลือกนี้หมดชั่วคราว (แอดมินคลิกค้างเพื่อแก้ไข)");
+    }
+    
+    let isMulti = group.multiSelect === true;
+    let isMan = group.items.some(i=>i.def);
+    if(!currentSelectedOpts[x]) currentSelectedOpts[x] = [];
+    if(isMulti) {
+        if(currentSelectedOpts[x].includes(y)) {
+            if(isMan && currentSelectedOpts[x].length === 1) return;
+            currentSelectedOpts[x] = currentSelectedOpts[x].filter(idx => idx !== y);
+            let b=$(`opt-btn-${x}-${y}`), p=$(`pos-opt-btn-${x}-${y}`);
+            if(b) b.classList.remove("active");
+            if(p) p.classList.remove("active");
+        } else {
+            currentSelectedOpts[x].push(y);
+            let b=$(`opt-btn-${x}-${y}`), p=$(`pos-opt-btn-${x}-${y}`);
+            if(b) b.classList.add("active");
+            if(p) p.classList.add("active");
+        }
+    } else {
+        if(currentSelectedOpts[x].includes(y)){
+            if(isMan) return;
+            currentSelectedOpts[x] = [];
+            let b=$(`opt-btn-${x}-${y}`), p=$(`pos-opt-btn-${x}-${y}`);
+            if(b) b.classList.remove("active");
+            if(p) p.classList.remove("active");
+        } else {
+            currentSelectedOpts[x] = [y];
+            let a=group.items.filter(i=>i.active!==!1);
+            for(let i=0;i<a.length;i++){
+                let b=$(`opt-btn-${x}-${i}`),p=$(`pos-opt-btn-${x}-${i}`);
+                if(b) i===y?b.classList.add("active"):b.classList.remove("active");
+                if(p) i===y?p.classList.add("active"):p.classList.remove("active");
+            }
+        }
+    }
+    if(!isPOSMode&&currentAddMode!=="edit"){
+        let m=!1;
+        Object.keys(currentSelectedOpts).forEach(k=>{
+            let jArr=currentSelectedOpts[k];
+            if(jArr&&jArr.length>0){
+                let a=currentModalItem.optGroups[k].items.filter(i=>i.active!==!1);
+                if(a[jArr[0]].img){$("detail-img").src=a[jArr[0]].img;m=!0}
+            }
+        });
+        if(!m)$("detail-img").src=currentModalItem.img||BLANK_IMG
+    }
+    calcDetailTotal();
+};
+
+// แสดงผลหน้าเมนูหลัก
+function renderMenusFromData() {
+    if(isDragging)return;
+    let m=$("main-content"); savedWindowScrollY=window.scrollY;
+    document.querySelectorAll(".menu-container").forEach(c=>{if(c.id)savedScrollPositions[c.id]=c.scrollLeft});
+    if(!rawMenuData.length)return m.innerHTML="<p class='text-center text-zinc-600 mt-20'>ยังไม่มีรายการอาหาร</p>";
+    
+    let u=[]; rawMenuData.forEach(i=>{if(i.category&&!u.includes(i.category))u.push(i.category)});
+    let l=$("category-list"); if(l)l.innerHTML=u.map(c=>`<option value="${c}">`).join("");
+    
+    rawMenuData.sort((a,b)=>(a.order||0)-(b.order||0));
+    let g={}; rawMenuData.forEach(i=>{let c=i.category||"ทั่วไป"; if(!g[c])g[c]=[]; g[c].push(i)});
+    globalGroups=g; let s=Object.keys(g);
+    if(dbCategoryOrder?.length)s.sort((a,b)=>{let x=dbCategoryOrder.indexOf(a),y=dbCategoryOrder.indexOf(b);return(x===-1?999:x)-(y===-1?999:y)});
+    
+    let a=getPerms().menu; m.innerHTML=""; let x=0;
+    s.forEach(c=>{
+        let d=`scroll-container-${x}`, e=document.createElement("div");
+        e.className=`mb-8 category-section ${activeJiggleCategory===x.toString()?"jiggle-active":""}`; e.dataset.catname=c; e.dataset.catindex=x;
+        e.innerHTML=`<h2 class="category-header select-none flex items-center gap-2">${c}${a?'<span class="material-symbols-outlined text-zinc-400 bg-zinc-900/50 p-2 rounded-xl cursor-grab category-drag-handle ml-3 text-3xl">swap_vert</span>':""}</h2><div class="relative w-full group"><button id="${d}-left-arrow" onclick="scrollMenuRow('${d}', -1)" style="display:none;" class="absolute left-0 top-1/2 -translate-y-1/2 z-40 w-10 h-16 bg-[#161616]/90 border border-yellow-500/50 text-yellow-500 rounded-r-xl items-center justify-center shadow-[0_0_15px_rgba(235,180,10,0.4)] transition hover:bg-yellow-500 hover:text-black opacity-80 hover:opacity-100"><span class="material-symbols-outlined text-4xl" style="transform: rotate(180deg)">play_arrow</span></button><div id="${d}" class="menu-container pl-12 pr-12" onscroll="updateScrollArrows('${d}')">${g[c].map((i,y)=>{
+            
+            let sp=i.price||0;
+            if(i.optGroups)i.optGroups.forEach(og=>og.items.forEach(it=>{if(it.def)sp=it.p}));
+            
+            // เพิ่มการเช็ค OutOfStock ตรงนี้
+            let oStyle = i.outOfStock ? "grayscale opacity-60 border-red-900/50" : "";
+            let oOverlay = i.outOfStock ? `<div class="absolute inset-0 bg-black/60 z-[35] flex items-center justify-center backdrop-blur-sm pointer-events-none"><span class="bg-red-600 text-white font-bold px-6 py-2 rounded-2xl text-2xl border-4 border-red-800 transform -rotate-12 shadow-[0_0_20px_rgba(220,38,38,0.8)] tracking-widest">หมด</span></div>` : '';
+            
+            return`<div class="menu-card relative cursor-pointer no-select ${oStyle}" data-key="${i.key}" onclick="openFoodDetail('${x}',${y},'${(c||"").replace(/'/g,"\\'")}')" oncontextmenu="toggleMenuStock(event, '${i.key}')">${oOverlay}${currentUser?`<div class="absolute top-3 right-3 flex gap-2 z-[30]">${a?`<button onclick="event.stopPropagation();toggleReorderMode(event,'${x}')" class="reorder-btn w-9 h-9 bg-black/60 text-white rounded-full flex items-center justify-center shadow-md"><span class="material-symbols-outlined text-sm pointer-events-none">open_with</span></button><button onclick="event.stopPropagation();openMenuEditor('${i.key}','${encodeURIComponent(JSON.stringify(i))}')" class="w-9 h-9 bg-black/60 text-white rounded-full hover:bg-yellow-500 hover:text-black flex items-center justify-center"><span class="material-symbols-outlined text-sm">edit</span></button><button onclick="event.stopPropagation();showConfirmModal('ลบเมนู','แน่ใจรึเปล่า?',()=>db.ref('menus/${i.key}').remove())" class="w-9 h-9 bg-black/60 text-red-400 rounded-full hover:bg-red-500 hover:text-white flex items-center justify-center"><span class="material-symbols-outlined text-sm">delete</span></button>`:""}</div>`:""}<img src="${i.img||BLANK_IMG}" class="food-img pointer-events-none no-select"><div class="p-5 flex flex-col h-[calc(100%-346px)] min-h-[160px] pointer-events-none"><div class="text-center flex-1"><h3 class="font-normal text-2xl text-red-800">${i.name}</h3><div class="mt-2 font-black text-xl text-red-900 leading-tight">เริ่มต้น ${sp} ฿</div></div></div></div>`}).join("")}</div><button id="${d}-right-arrow" onclick="scrollMenuRow('${d}', 1)" style="display:none;" class="absolute right-0 top-1/2 -translate-y-1/2 z-40 w-10 h-16 bg-[#161616]/90 border border-yellow-500/50 text-yellow-500 rounded-l-xl items-center justify-center shadow-[0_0_15px_rgba(235,180,10,0.4)] transition hover:bg-yellow-500 hover:text-black opacity-80 hover:opacity-100"><span class="material-symbols-outlined text-4xl">play_arrow</span></button></div>`;
+        m.appendChild(e); x++;
+    });
+    
+    if(a)Sortable.create(m,{animation:150,handle:".category-drag-handle",onChoose:e=>e.item.classList.add("category-jiggle"),onUnchoose:e=>e.item.classList.remove("category-jiggle"),onEnd:e=>{e.item.classList.remove("category-jiggle");let o=[];m.querySelectorAll(".category-section").forEach(s=>o.push(s.dataset.catname));db.ref("admin_settings/category_order").set(o)}});
+    document.querySelectorAll(".category-section").forEach(s=>{let x=s.dataset.catindex,c=s.querySelector(".menu-container");sortableInstances[x]=Sortable.create(c,{disabled:activeJiggleCategory!==x.toString(),animation:150,direction:"horizontal",onEnd:()=>{let u={};c.querySelectorAll(".menu-card").forEach((k,y)=>u[`menus/${k.dataset.key}/order`]=y);db.ref().update(u)}})});
+    setTimeout(()=>{window.scrollTo(0,savedWindowScrollY);document.querySelectorAll(".menu-container").forEach(c=>{if(savedScrollPositions[c.id]!==undefined)c.scrollLeft=savedScrollPositions[c.id];updateScrollArrows(c.id)})},100)
+}
+
+// อัปเดตหน้าต่างตัวเลือกปกติ (Food Detail Modal)
+function renderFoodDetailModal() {
+    currentModalItem=globalGroups[currentModalCategory]?.[currentModalIndex];
+    if(!currentModalItem)return;
+    $("detail-name").innerText=currentModalItem.name;
+    $("detail-desc").innerText=currentModalItem.desc||"";
+    
+    let basePriceContainer = $("detail-base-price").parentElement;
+    if(basePriceContainer) {
+        basePriceContainer.innerHTML = '<span class="text-zinc-300 font-bold text-lg">ราคารวม</span><span class="text-yellow-500 font-black text-2xl" id="detail-base-price">0 ฿</span>';
+    }
+    
+    $("detail-qty").innerText=currentModalQty;
+    $("detail-img").src=currentModalItem.img||BLANK_IMG;
+    let h=""; currentSelectedOpts={};
+    
+    if(currentModalItem.optGroups&&currentModalItem.optGroups.length>0){
+        currentModalItem.optGroups.forEach((g,x)=>{
+            let a=g.items?g.items.filter(i=>i.active!==!1):[];
+            if(a.length>0){
+                let defIdx=a.findIndex(i=>i.def);
+                currentSelectedOpts[x]=defIdx!==-1?[defIdx]:[];
+                
+                h+=`<div class="mb-4"><div class="text-zinc-400 text-xs mb-2 pl-1">${g.name} ${g.multiSelect?'<span class="text-[10px] bg-yellow-500/20 text-yellow-500 px-2 py-0.5 rounded ml-1">เลือกได้หลายอย่าง</span>':''} ${g.requireOne?'<span class="text-[10px] bg-red-500/20 text-red-500 border border-red-500/30 px-2 py-0.5 rounded ml-1">* จำเป็นต้องเลือก</span>':''}</div><div class="grid grid-cols-2 gap-2">`;
+                a.forEach((i,y)=>{
+                    let priceVal = parseFloat(i.p) || 0;
+                    let pStr = "";
+                    if(!g.stepEnable) pStr = priceVal > 0 ? `<div class="opt-price">+${priceVal} ฿</div>` : (priceVal < 0 ? `<div class="opt-price">${priceVal} ฿</div>` : "");
+                    let dbg=i.def?'<div class="absolute -top-3 -right-2 bg-blue-500 text-white text-[10px] px-2 py-0.5 rounded-full z-10 shadow">ราคาเริ่มต้น</div>':"";
+                    let dcl=i.def?"border-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.5)]":"border-[#444]";
+                    let act=currentSelectedOpts[x].includes(y)?"active":"";
+                    
+                    // แทรกสถานะสินค้าหมด
+                    let isOutOfStock = i.outOfStock === true;
+                    let oStyle = isOutOfStock ? "opacity-40 grayscale border-red-900/50" : dcl;
+                    let oOverlay = isOutOfStock ? `<div class="absolute inset-0 bg-black/60 z-[15] flex items-center justify-center rounded-lg pointer-events-none"><span class="bg-red-600 text-white font-bold px-2 py-1 rounded text-xs transform -rotate-12 shadow-lg border border-red-800 tracking-widest">หมด</span></div>` : '';
+                    
+                    h+=`<div id="opt-btn-${x}-${y}" oncontextmenu="handleOptionRightClick(event, ${x}, ${y})" onclick="selectDetailOption(${x},${y})" class="opt-btn relative flex flex-col justify-center !border-2 ${oStyle} ${act}">${oOverlay}${dbg}<div class="opt-name ${(!g.stepEnable&&priceVal===0)?'!mb-0 text-sm font-bold':''}">${i.n}</div>${pStr}</div>`
+                });
+                h+="</div></div>"
+            }
+        })
+    }
+    if(!h)h='<div class="text-zinc-500 text-sm text-center py-2">ไม่มีตัวเลือกเสริม</div>';
+    $("detail-groups-container").innerHTML=h;
+    $("add-to-cart-btn").innerHTML='<span class="material-symbols-outlined">add_shopping_cart</span> เพิ่มลงตะกร้า';
+    $("add-to-cart-btn").className="w-full bg-yellow-500 text-black font-bold py-4 rounded-2xl hover:bg-yellow-400 transition flex items-center justify-center gap-2 shadow-[0_0_15px_rgba(235,180,10,0.3)]";
+    calcDetailTotal()
+}
+
+// อัปเดตหน้าต่างตัวเลือกของฝั่ง POS (POS Food Detail Modal)
+function renderPOSFoodDetail() {
+    currentModalItem=globalGroups[currentModalCategory]?.[currentModalIndex];
+    if(!currentModalItem)return;
+    $("pos-detail-name").innerText=currentModalItem.name;
+    $("pos-detail-qty").innerText=currentModalQty;
+    let h=""; currentSelectedOpts={};
+    
+    if(currentModalItem.optGroups&&currentModalItem.optGroups.length>0){
+        currentModalItem.optGroups.forEach((g,x)=>{
+            let a=g.items?g.items.filter(i=>i.active!==!1):[];
+            if(a.length>0){
+                let defIdx=a.findIndex(i=>i.def);
+                currentSelectedOpts[x]=defIdx!==-1?[defIdx]:[];
+                
+                h+=`<div class="mb-4"><div class="text-zinc-400 text-xs mb-2 pl-1">${g.name} ${g.multiSelect?'<span class="text-[10px] bg-yellow-500/20 text-yellow-500 px-2 py-0.5 rounded ml-1">เลือกได้หลายอย่าง</span>':''} ${g.requireOne?'<span class="text-[10px] bg-red-500/20 text-red-500 border border-red-500/30 px-2 py-0.5 rounded ml-1">* จำเป็นต้องเลือก</span>':''}</div><div class="grid grid-cols-2 gap-2">`;
+                a.forEach((i,y)=>{
+                    let priceVal = parseFloat(i.p) || 0;
+                    let pStr = "";
+                    if(!g.stepEnable) pStr = priceVal > 0 ? `<div class="opt-price text-sm">+${priceVal} ฿</div>` : (priceVal < 0 ? `<div class="opt-price text-sm">${priceVal} ฿</div>` : "");
+                    let dbg=i.def?'<div class="absolute -top-3 -right-2 bg-blue-500 text-white text-[10px] px-2 py-0.5 rounded-full z-10 shadow">ราคาเริ่มต้น</div>':"";
+                    let dcl=i.def?"border-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.5)]":"border-[#444]";
+                    let act=currentSelectedOpts[x].includes(y)?"active":"";
+                    
+                    // แทรกสถานะสินค้าหมด
+                    let isOutOfStock = i.outOfStock === true;
+                    let oStyle = isOutOfStock ? "opacity-40 grayscale border-red-900/50" : dcl;
+                    let oOverlay = isOutOfStock ? `<div class="absolute inset-0 bg-black/60 z-[15] flex items-center justify-center rounded-lg pointer-events-none"><span class="bg-red-600 text-white font-bold px-2 py-1 rounded text-xs transform -rotate-12 shadow-lg border border-red-800 tracking-widest">หมด</span></div>` : '';
+                    
+                    h+=`<div id="pos-opt-btn-${x}-${y}" oncontextmenu="handleOptionRightClick(event, ${x}, ${y})" onclick="selectDetailOption(${x},${y})" class="opt-btn relative flex flex-col justify-center !border-2 ${oStyle} ${act}">${oOverlay}${dbg}<div class="opt-name text-xs ${(!g.stepEnable&&priceVal===0)?'!mb-0 text-[14px] font-bold':''}">${i.n}</div>${pStr}</div>`
+                });
+                h+="</div></div>"
+            }
+        })
+    }
+    if(!h)h='<div class="text-zinc-500 text-sm text-center py-2">ไม่มีตัวเลือกเสริม</div>';
+    $("pos-detail-groups-container").innerHTML=h;
+    $("pos-add-to-cart-btn").innerHTML='<span class="material-symbols-outlined">add</span> เพิ่มรายการ';
+    $("pos-add-to-cart-btn").className="w-full bg-green-500 text-black font-bold py-4 rounded-xl hover:bg-green-400 transition flex items-center justify-center gap-2 shadow-[0_0_15px_rgba(34,197,94,0.4)]";
+    calcDetailTotal()
+}
+// ==========================================
+// ระบบจัดการสต๊อก (สินค้าหมด) รวดเร็ว + ลิงก์ทุกเมนู (อัปเดตใหม่)
+// ==========================================
+
+// 1. ฉีดหน้าต่าง Modal ย่อยเข้าไปสำหรับจัดการตัวเลือก
+if(!document.getElementById('option-action-modal')) {
+    document.body.insertAdjacentHTML('beforeend', `
+    <div id="option-action-modal" class="admin-modal" style="z-index:99999" onclick="closeModal('option-action-modal')">
+        <div class="admin-modal-content !max-w-xs text-center border-2 border-zinc-700" onclick="event.stopPropagation()">
+            <h2 class="text-yellow-500 text-xl font-bold mb-4" id="opt-action-title">จัดการตัวเลือก</h2>
+            <div class="flex flex-col gap-3">
+                <button id="btn-opt-stock" class="w-full bg-red-600 text-white font-bold py-3 rounded-xl hover:bg-red-500 transition shadow-lg"></button>
+                <button id="btn-opt-def" class="w-full bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-500 transition shadow-lg">⭐ ตั้งเป็นราคาเริ่มต้น</button>
+                <button onclick="closeModal('option-action-modal')" class="w-full bg-zinc-800 text-zinc-300 font-bold py-3 rounded-xl hover:bg-zinc-700 transition mt-2">ยกเลิก</button>
+            </div>
+        </div>
+    </div>`);
+}
+
+// 2. ฟังก์ชันสลับสถานะ สินค้าหลัก (เมนู)
+window.toggleMenuStock = (e, key) => {
+    e.preventDefault();
+    if(!getPerms().menu) return; // เฉพาะแอดมินหรือเจ้าของ
+    let item = rawMenuData.find(m => m.key === key);
+    if(!item) return;
+    let newState = !item.outOfStock;
+    
+    showConfirmModal("จัดการสต๊อก", `ต้องการตั้งค่าให้ "${item.name}"\n${newState ? '👉 เปลี่ยนเป็น "สินค้าหมด" (ลูกค้าสั่งไม่ได้)' : '👉 เปิดเป็น "มีสินค้า" (สั่งได้ปกติ)'} ใช่หรือไม่?`, () => {
+        db.ref("menus/" + key).update({ outOfStock: newState }).then(() => {
+            showToast(newState ? "🔴 ตั้งเป็นสินค้าหมดแล้ว" : "🟢 เปิดให้สั่งปกติแล้ว");
+        });
+    });
+};
+
+// 3. ฟังก์ชันคลิกขวาที่ตัวเลือกย่อย
+window.handleOptionRightClick = (e, x, y) => {
+    e.preventDefault();
+    if(!getPerms().menu) return;
+    
+    let item = currentModalItem.optGroups[x].items[y];
+    document.getElementById('opt-action-title').innerText = "ตัวเลือก: " + item.n;
+    
+    let btnStock = document.getElementById('btn-opt-stock');
+    btnStock.innerHTML = item.outOfStock ? '<span class="material-symbols-outlined align-middle mr-1">check_circle</span> เปิดขายปกติ' : '<span class="material-symbols-outlined align-middle mr-1">block</span> ตั้งว่าสินค้าหมด';
+    btnStock.className = item.outOfStock ? "w-full bg-green-600 text-white font-bold py-3 rounded-xl hover:bg-green-500 transition shadow-lg" : "w-full bg-red-600 text-white font-bold py-3 rounded-xl hover:bg-red-500 transition shadow-lg";
+    
+    btnStock.onclick = () => {
+        closeModal('option-action-modal');
+        toggleOptionStock(x, y);
+    };
+    
+    document.getElementById('btn-opt-def').onclick = () => {
+        closeModal('option-action-modal');
+        setAsDefaultOptionDirect(x, y);
+    };
+    
+    document.getElementById('option-action-modal').style.display = 'flex';
+};
+
+// 4. ✨ ไฮไลท์การแก้: ฟังก์ชันจัดการสลับสต๊อกตัวเลือก (ซิงค์ชื่อเดียวกันทุกเมนู!)
+window.toggleOptionStock = (x, y) => {
+    let targetItem = currentModalItem.optGroups[x].items[y];
+    let optionName = targetItem.n; // ยึดชื่อเป็นหลัก (เช่น "หมูตุ๋น")
+    let newState = !targetItem.outOfStock;
+    
+    let updates = {};
+    let menusUpdated = 0;
+
+    // วนหาทุกเมนูในร้าน
+    rawMenuData.forEach(m => {
+        if(m.optGroups) {
+            let hasMatch = false;
+            let newGroups = JSON.parse(JSON.stringify(m.optGroups));
+            
+            // หาตัวเลือกที่ชื่อตรงกัน
+            newGroups.forEach(g => {
+                g.items.forEach(it => {
+                    if(it.n === optionName) { 
+                        if (it.outOfStock !== newState) {
+                            it.outOfStock = newState; // อัปเดตสถานะให้เหมือนกัน
+                            if(newState && it.def) it.def = false; // ปลดราคาเริ่มต้นถ้าของหมด
+                            hasMatch = true;
+                        }
+                    }
+                });
+            });
+            
+            // ถ้าเมนูนี้มี "หมูตุ๋น" ให้เตรียมโยนขึ้น Database
+            if(hasMatch) {
+                updates[`menus/${m.key}/optGroups`] = newGroups;
+                menusUpdated++;
+            }
+        }
+    });
+    
+    // อัปเดตรวดเดียวจบ
+    db.ref().update(updates).then(() => {
+        showToast(newState ? `🔴 "${optionName}" หมด (ลิงก์ ${menusUpdated} เมนู)` : `🟢 "${optionName}" มีของแล้ว (ลิงก์ ${menusUpdated} เมนู)`);
+        
+        // อัปเดต UI หน้าจอที่กำลังเปิดอยู่
+        let matchGroup = updates[`menus/${currentModalItem.key}/optGroups`];
+        if(matchGroup) currentModalItem.optGroups = matchGroup;
+        
+        if(currentAddMode==="pos" || currentAddMode==="edit") renderPOSFoodDetail();
+        else renderFoodDetailModal();
+    });
+};
+
+// 5. ฟังก์ชันตั้งราคาเริ่มต้น
+window.setAsDefaultOptionDirect = (x, y) => {
+    let targetItem = currentModalItem.optGroups[x].items[y];
+    let n = targetItem.n;
+    if(targetItem.outOfStock) return showToast("⚠️ สินค้าหมด ไม่สามารถตั้งเป็นค่าเริ่มต้นได้");
+    
+    if(targetItem.def) {
+        showConfirmModal("ยกเลิกราคาเริ่มต้น",`ต้องการยกเลิก [${n}] ไม่ให้เป็นราคาเริ่มต้นใช่ไหม?`,()=>{
+            let ng=JSON.parse(JSON.stringify(currentModalItem.optGroups));
+            ng[x].items[y].def = false; 
+            db.ref("menus/"+currentModalItem.key).update({optGroups:ng}).then(()=>{
+                showToast("🗑️ ยกเลิกราคาเริ่มต้นแล้ว");
+                currentModalItem.optGroups=ng;
+                if(currentAddMode==="pos"||currentAddMode==="edit")renderPOSFoodDetail();
+                else renderFoodDetailModal();
+            });
+        });
+    } else {
+        showConfirmModal("ตั้งราคาเริ่มต้น",`ให้ [${n}] เป็นราคาเริ่มต้นใช่ไหม?`,()=>{
+            let ng=JSON.parse(JSON.stringify(currentModalItem.optGroups));
+            ng.forEach((g,gx)=>g.items.forEach((it,iy)=>it.def=(gx===x&&iy===y)));
+            let up={optGroups:ng};
+            if((currentModalItem.price||0)===0)up.priceReplace=!0;
+            db.ref("menus/"+currentModalItem.key).update(up).then(()=>{
+                showToast("✨ ตั้งเป็นราคาเริ่มต้นแล้ว");
+                currentModalItem.optGroups=ng;
+                if(currentAddMode==="pos"||currentAddMode==="edit")renderPOSFoodDetail();
+                else renderFoodDetailModal();
+            });
+        });
+    }
+};
+
+// ==========================================
+// อัปเดตดีไซน์ UI (เทาจางๆ + ป้ายแดงมุมขวา)
+// ==========================================
+
+// ป้องกันการกดเข้าเมนูที่หมดแล้ว
+window.openFoodDetail = (c, i, n) => {
+    let item = globalGroups[n]?.[i];
+    if(item && item.outOfStock) {
+        return showToast("⚠️ สินค้านี้หมดชั่วคราว (แอดมินคลิกค้างเพื่อเปิดขาย)");
+    }
+    let s=document.querySelector(`.category-section[data-catindex="${c}"]`);
+    if(s&&s.classList.contains("jiggle-active"))return;
+    currentModalCategory=n; currentModalIndex=i; editingCartIndex=-1; currentModalQty=1; currentAddMode="cart";
+    renderFoodDetailModal(); $("food-detail-modal").style.display="flex";
+    if($("food-detail-scroll"))$("food-detail-scroll").scrollTop=0;
+};
+
+window.openPOSFoodDetail = (c, i, n, m="pos") => {
+    let item = globalGroups[n]?.[i];
+    if(item && item.outOfStock) {
+        return showToast("⚠️ สินค้านี้หมดชั่วคราว (คลิกค้างเพื่อเปิดขาย)");
+    }
+    currentAddMode=m; currentModalCategory=n; currentModalIndex=i; editingCartIndex=-1; currentModalQty=1;
+    renderPOSFoodDetail(); $("pos-food-detail-modal").style.display="flex";
+    if($("pos-detail-groups-container"))$("pos-detail-groups-container").scrollTop=0;
+};
+
+// ป้องกันการเลือกออปชันที่หมดแล้ว
+window.selectDetailOption = (x, y) => {
+    let group = currentModalItem.optGroups[x];
+    if (group.items[y].outOfStock) {
+        return showToast("⚠️ ตัวเลือกนี้หมดชั่วคราว (แอดมินคลิกค้างเพื่อเปิดขาย)");
+    }
+    
+    let isMulti = group.multiSelect === true;
+    let isMan = group.items.some(i=>i.def);
+    if(!currentSelectedOpts[x]) currentSelectedOpts[x] = [];
+    if(isMulti) {
+        if(currentSelectedOpts[x].includes(y)) {
+            if(isMan && currentSelectedOpts[x].length === 1) return;
+            currentSelectedOpts[x] = currentSelectedOpts[x].filter(idx => idx !== y);
+            let b=$(`opt-btn-${x}-${y}`), p=$(`pos-opt-btn-${x}-${y}`);
+            if(b) b.classList.remove("active");
+            if(p) p.classList.remove("active");
+        } else {
+            currentSelectedOpts[x].push(y);
+            let b=$(`opt-btn-${x}-${y}`), p=$(`pos-opt-btn-${x}-${y}`);
+            if(b) b.classList.add("active");
+            if(p) p.classList.add("active");
+        }
+    } else {
+        if(currentSelectedOpts[x].includes(y)){
+            if(isMan) return;
+            currentSelectedOpts[x] = [];
+            let b=$(`opt-btn-${x}-${y}`), p=$(`pos-opt-btn-${x}-${y}`);
+            if(b) b.classList.remove("active");
+            if(p) p.classList.remove("active");
+        } else {
+            currentSelectedOpts[x] = [y];
+            let a=group.items.filter(i=>i.active!==!1);
+            for(let i=0;i<a.length;i++){
+                let b=$(`opt-btn-${x}-${i}`),p=$(`pos-opt-btn-${x}-${i}`);
+                if(b) i===y?b.classList.add("active"):b.classList.remove("active");
+                if(p) i===y?p.classList.add("active"):p.classList.remove("active");
+            }
+        }
+    }
+    if(!isPOSMode&&currentAddMode!=="edit"){
+        let m=!1;
+        Object.keys(currentSelectedOpts).forEach(k=>{
+            let jArr=currentSelectedOpts[k];
+            if(jArr&&jArr.length>0){
+                let a=currentModalItem.optGroups[k].items.filter(i=>i.active!==!1);
+                if(a[jArr[0]].img){$("detail-img").src=a[jArr[0]].img;m=!0}
+            }
+        });
+        if(!m)$("detail-img").src=currentModalItem.img||BLANK_IMG
+    }
+    calcDetailTotal();
+};
+
+// แสดงผลหน้าเมนูหลัก (ปรับดีไซน์เทาบางๆ คำว่าหมดสีแดง)
+function renderMenusFromData() {
+    if(isDragging)return;
+    let m=$("main-content"); savedWindowScrollY=window.scrollY;
+    document.querySelectorAll(".menu-container").forEach(c=>{if(c.id)savedScrollPositions[c.id]=c.scrollLeft});
+    if(!rawMenuData.length)return m.innerHTML="<p class='text-center text-zinc-600 mt-20'>ยังไม่มีรายการอาหาร</p>";
+    
+    let u=[]; rawMenuData.forEach(i=>{if(i.category&&!u.includes(i.category))u.push(i.category)});
+    let l=$("category-list"); if(l)l.innerHTML=u.map(c=>`<option value="${c}">`).join("");
+    
+    rawMenuData.sort((a,b)=>(a.order||0)-(b.order||0));
+    let g={}; rawMenuData.forEach(i=>{let c=i.category||"ทั่วไป"; if(!g[c])g[c]=[]; g[c].push(i)});
+    globalGroups=g; let s=Object.keys(g);
+    if(dbCategoryOrder?.length)s.sort((a,b)=>{let x=dbCategoryOrder.indexOf(a),y=dbCategoryOrder.indexOf(b);return(x===-1?999:x)-(y===-1?999:y)});
+    
+    let a=getPerms().menu; m.innerHTML=""; let x=0;
+    s.forEach(c=>{
+        let d=`scroll-container-${x}`, e=document.createElement("div");
+        e.className=`mb-8 category-section ${activeJiggleCategory===x.toString()?"jiggle-active":""}`; e.dataset.catname=c; e.dataset.catindex=x;
+        e.innerHTML=`<h2 class="category-header select-none flex items-center gap-2">${c}${a?'<span class="material-symbols-outlined text-zinc-400 bg-zinc-900/50 p-2 rounded-xl cursor-grab category-drag-handle ml-3 text-3xl">swap_vert</span>':""}</h2><div class="relative w-full group"><button id="${d}-left-arrow" onclick="scrollMenuRow('${d}', -1)" style="display:none;" class="absolute left-0 top-1/2 -translate-y-1/2 z-40 w-10 h-16 bg-[#161616]/90 border border-yellow-500/50 text-yellow-500 rounded-r-xl items-center justify-center shadow-[0_0_15px_rgba(235,180,10,0.4)] transition hover:bg-yellow-500 hover:text-black opacity-80 hover:opacity-100"><span class="material-symbols-outlined text-4xl" style="transform: rotate(180deg)">play_arrow</span></button><div id="${d}" class="menu-container pl-12 pr-12" onscroll="updateScrollArrows('${d}')">${g[c].map((i,y)=>{
+            
+            let sp=i.price||0;
+            if(i.optGroups)i.optGroups.forEach(og=>og.items.forEach(it=>{if(it.def)sp=it.p}));
+            
+            // ✨ ดีไซน์ของหมดที่เมนูหลัก
+            let oStyle = i.outOfStock ? "opacity-70 grayscale-[50%] border-red-900/50" : "";
+            let oOverlay = i.outOfStock ? `<div class="absolute inset-0 bg-black/40 z-[35] flex items-center justify-center backdrop-blur-[1px] pointer-events-none"><span class="text-red-500 font-black text-4xl transform -rotate-12 drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)] tracking-widest bg-black/60 px-4 py-2 rounded-xl border border-red-500">หมด</span></div>` : '';
+            
+            return`<div class="menu-card relative cursor-pointer no-select ${oStyle}" data-key="${i.key}" onclick="openFoodDetail('${x}',${y},'${(c||"").replace(/'/g,"\\'")}')" oncontextmenu="toggleMenuStock(event, '${i.key}')">${oOverlay}${currentUser?`<div class="absolute top-3 right-3 flex gap-2 z-[30]">${a?`<button onclick="event.stopPropagation();toggleReorderMode(event,'${x}')" class="reorder-btn w-9 h-9 bg-black/60 text-white rounded-full flex items-center justify-center shadow-md"><span class="material-symbols-outlined text-sm pointer-events-none">open_with</span></button><button onclick="event.stopPropagation();openMenuEditor('${i.key}','${encodeURIComponent(JSON.stringify(i))}')" class="w-9 h-9 bg-black/60 text-white rounded-full hover:bg-yellow-500 hover:text-black flex items-center justify-center"><span class="material-symbols-outlined text-sm">edit</span></button><button onclick="event.stopPropagation();showConfirmModal('ลบเมนู','แน่ใจรึเปล่า?',()=>db.ref('menus/${i.key}').remove())" class="w-9 h-9 bg-black/60 text-red-400 rounded-full hover:bg-red-500 hover:text-white flex items-center justify-center"><span class="material-symbols-outlined text-sm">delete</span></button>`:""}</div>`:""}<img src="${i.img||BLANK_IMG}" class="food-img pointer-events-none no-select"><div class="p-5 flex flex-col h-[calc(100%-346px)] min-h-[160px] pointer-events-none"><div class="text-center flex-1"><h3 class="font-normal text-2xl text-red-800">${i.name}</h3><div class="mt-2 font-black text-xl text-red-900 leading-tight">เริ่มต้น ${sp} ฿</div></div></div></div>`}).join("")}</div><button id="${d}-right-arrow" onclick="scrollMenuRow('${d}', 1)" style="display:none;" class="absolute right-0 top-1/2 -translate-y-1/2 z-40 w-10 h-16 bg-[#161616]/90 border border-yellow-500/50 text-yellow-500 rounded-l-xl items-center justify-center shadow-[0_0_15px_rgba(235,180,10,0.4)] transition hover:bg-yellow-500 hover:text-black opacity-80 hover:opacity-100"><span class="material-symbols-outlined text-4xl">play_arrow</span></button></div>`;
+        m.appendChild(e); x++;
+    });
+    
+    if(a)Sortable.create(m,{animation:150,handle:".category-drag-handle",onChoose:e=>e.item.classList.add("category-jiggle"),onUnchoose:e=>e.item.classList.remove("category-jiggle"),onEnd:e=>{e.item.classList.remove("category-jiggle");let o=[];m.querySelectorAll(".category-section").forEach(s=>o.push(s.dataset.catname));db.ref("admin_settings/category_order").set(o)}});
+    document.querySelectorAll(".category-section").forEach(s=>{let x=s.dataset.catindex,c=s.querySelector(".menu-container");sortableInstances[x]=Sortable.create(c,{disabled:activeJiggleCategory!==x.toString(),animation:150,direction:"horizontal",onEnd:()=>{let u={};c.querySelectorAll(".menu-card").forEach((k,y)=>u[`menus/${k.dataset.key}/order`]=y);db.ref().update(u)}})});
+    setTimeout(()=>{window.scrollTo(0,savedWindowScrollY);document.querySelectorAll(".menu-container").forEach(c=>{if(savedScrollPositions[c.id]!==undefined)c.scrollLeft=savedScrollPositions[c.id];updateScrollArrows(c.id)})},100)
+}
+
+// อัปเดตหน้าต่างตัวเลือกปกติ (Food Detail Modal) - เพิ่มป้ายแดงมุมขวาบน
+function renderFoodDetailModal() {
+    currentModalItem=globalGroups[currentModalCategory]?.[currentModalIndex];
+    if(!currentModalItem)return;
+    $("detail-name").innerText=currentModalItem.name;
+    $("detail-desc").innerText=currentModalItem.desc||"";
+    
+    let basePriceContainer = $("detail-base-price").parentElement;
+    if(basePriceContainer) {
+        basePriceContainer.innerHTML = '<span class="text-zinc-300 font-bold text-lg">ราคารวม</span><span class="text-yellow-500 font-black text-2xl" id="detail-base-price">0 ฿</span>';
+    }
+    
+    $("detail-qty").innerText=currentModalQty;
+    $("detail-img").src=currentModalItem.img||BLANK_IMG;
+    let h=""; currentSelectedOpts={};
+    
+    if(currentModalItem.optGroups&&currentModalItem.optGroups.length>0){
+        currentModalItem.optGroups.forEach((g,x)=>{
+            let a=g.items?g.items.filter(i=>i.active!==!1):[];
+            if(a.length>0){
+                let defIdx=a.findIndex(i=>i.def);
+                currentSelectedOpts[x]=defIdx!==-1?[defIdx]:[];
+                
+                h+=`<div class="mb-4"><div class="text-zinc-400 text-xs mb-2 pl-1">${g.name} ${g.multiSelect?'<span class="text-[10px] bg-yellow-500/20 text-yellow-500 px-2 py-0.5 rounded ml-1">เลือกได้หลายอย่าง</span>':''} ${g.requireOne?'<span class="text-[10px] bg-red-500/20 text-red-500 border border-red-500/30 px-2 py-0.5 rounded ml-1">* จำเป็นต้องเลือก</span>':''}</div><div class="grid grid-cols-2 gap-2">`;
+                a.forEach((i,y)=>{
+                    let priceVal = parseFloat(i.p) || 0;
+                    let pStr = "";
+                    if(!g.stepEnable) pStr = priceVal > 0 ? `<div class="opt-price">+${priceVal} ฿</div>` : (priceVal < 0 ? `<div class="opt-price">${priceVal} ฿</div>` : "");
+                    
+                    let act=currentSelectedOpts[x].includes(y)?"active":"";
+                    let dcl = "border-[#444]";
+                    let dbg = "";
+                    
+                    // ✨ ดีไซน์สถานะหมดของตัวเลือกย่อย
+                    if (i.outOfStock) {
+                        dbg = '<div class="absolute -top-3 -right-2 bg-red-600 text-white text-[10px] px-2 py-0.5 rounded-full z-10 shadow border border-red-900">หมด</div>';
+                    } else if (i.def) {
+                        dcl = "border-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.5)]";
+                        dbg = '<div class="absolute -top-3 -right-2 bg-blue-500 text-white text-[10px] px-2 py-0.5 rounded-full z-10 shadow">ราคาเริ่มต้น</div>';
+                    }
+                    
+                    let oStyle = i.outOfStock ? "opacity-50 grayscale border-zinc-800 bg-zinc-900/50" : dcl;
+                    
+                    h+=`<div id="opt-btn-${x}-${y}" oncontextmenu="handleOptionRightClick(event, ${x}, ${y})" onclick="selectDetailOption(${x},${y})" class="opt-btn relative flex flex-col justify-center !border-2 ${oStyle} ${act}">${dbg}<div class="opt-name ${(!g.stepEnable&&priceVal===0)?'!mb-0 text-sm font-bold':''}">${i.n}</div>${pStr}</div>`
+                });
+                h+="</div></div>"
+            }
+        })
+    }
+    if(!h)h='<div class="text-zinc-500 text-sm text-center py-2">ไม่มีตัวเลือกเสริม</div>';
+    $("detail-groups-container").innerHTML=h;
+    $("add-to-cart-btn").innerHTML='<span class="material-symbols-outlined">add_shopping_cart</span> เพิ่มลงตะกร้า';
+    $("add-to-cart-btn").className="w-full bg-yellow-500 text-black font-bold py-4 rounded-2xl hover:bg-yellow-400 transition flex items-center justify-center gap-2 shadow-[0_0_15px_rgba(235,180,10,0.3)]";
+    calcDetailTotal()
+}
+
+// อัปเดตหน้าต่างตัวเลือกฝั่ง POS (POS Food Detail Modal) - เพิ่มป้ายแดงมุมขวาบน
+function renderPOSFoodDetail() {
+    currentModalItem=globalGroups[currentModalCategory]?.[currentModalIndex];
+    if(!currentModalItem)return;
+    $("pos-detail-name").innerText=currentModalItem.name;
+    $("pos-detail-qty").innerText=currentModalQty;
+    let h=""; currentSelectedOpts={};
+    
+    if(currentModalItem.optGroups&&currentModalItem.optGroups.length>0){
+        currentModalItem.optGroups.forEach((g,x)=>{
+            let a=g.items?g.items.filter(i=>i.active!==!1):[];
+            if(a.length>0){
+                let defIdx=a.findIndex(i=>i.def);
+                currentSelectedOpts[x]=defIdx!==-1?[defIdx]:[];
+                
+                h+=`<div class="mb-4"><div class="text-zinc-400 text-xs mb-2 pl-1">${g.name} ${g.multiSelect?'<span class="text-[10px] bg-yellow-500/20 text-yellow-500 px-2 py-0.5 rounded ml-1">เลือกได้หลายอย่าง</span>':''} ${g.requireOne?'<span class="text-[10px] bg-red-500/20 text-red-500 border border-red-500/30 px-2 py-0.5 rounded ml-1">* จำเป็นต้องเลือก</span>':''}</div><div class="grid grid-cols-2 gap-2">`;
+                a.forEach((i,y)=>{
+                    let priceVal = parseFloat(i.p) || 0;
+                    let pStr = "";
+                    if(!g.stepEnable) pStr = priceVal > 0 ? `<div class="opt-price text-sm">+${priceVal} ฿</div>` : (priceVal < 0 ? `<div class="opt-price text-sm">${priceVal} ฿</div>` : "");
+                    
+                    let act=currentSelectedOpts[x].includes(y)?"active":"";
+                    let dcl = "border-[#444]";
+                    let dbg = "";
+                    
+                    // ✨ ดีไซน์สถานะหมดของตัวเลือกย่อย
+                    if (i.outOfStock) {
+                        dbg = '<div class="absolute -top-3 -right-2 bg-red-600 text-white text-[10px] px-2 py-0.5 rounded-full z-10 shadow border border-red-900">หมด</div>';
+                    } else if (i.def) {
+                        dcl = "border-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.5)]";
+                        dbg = '<div class="absolute -top-3 -right-2 bg-blue-500 text-white text-[10px] px-2 py-0.5 rounded-full z-10 shadow">ราคาเริ่มต้น</div>';
+                    }
+                    
+                    let oStyle = i.outOfStock ? "opacity-50 grayscale border-zinc-800 bg-zinc-900/50" : dcl;
+                    
+                    h+=`<div id="pos-opt-btn-${x}-${y}" oncontextmenu="handleOptionRightClick(event, ${x}, ${y})" onclick="selectDetailOption(${x},${y})" class="opt-btn relative flex flex-col justify-center !border-2 ${oStyle} ${act}">${dbg}<div class="opt-name text-xs ${(!g.stepEnable&&priceVal===0)?'!mb-0 text-[14px] font-bold':''}">${i.n}</div>${pStr}</div>`
+                });
+                h+="</div></div>"
+            }
+        })
+    }
+    if(!h)h='<div class="text-zinc-500 text-sm text-center py-2">ไม่มีตัวเลือกเสริม</div>';
+    $("pos-detail-groups-container").innerHTML=h;
+    $("pos-add-to-cart-btn").innerHTML='<span class="material-symbols-outlined">add</span> เพิ่มรายการ';
+    $("pos-add-to-cart-btn").className="w-full bg-green-500 text-black font-bold py-4 rounded-xl hover:bg-green-400 transition flex items-center justify-center gap-2 shadow-[0_0_15px_rgba(34,197,94,0.4)]";
+    calcDetailTotal()
+}
+
+// ==========================================
+// อัปเดตระบบสิทธิ์ผู้ใช้งาน: เพิ่มสิทธิ์จัดการสต๊อก & ตั้งราคาเริ่มต้น
+// ==========================================
+
+// 1. แทรก Checkbox 2 ตัวใหม่เข้าไปในหน้าจอจัดการพนักงานอัตโนมัติ
+setTimeout(() => {
+    let permGrid = document.querySelector("#emp-permissions-section .grid");
+    if (permGrid && !document.getElementById("p-stock")) {
+        permGrid.insertAdjacentHTML("beforeend", `
+            <label><input type="checkbox" id="p-stock" class="mr-1 accent-yellow-500"> จัดการสต๊อก (ของหมด/มี)</label>
+            <label><input type="checkbox" id="p-set-def" class="mr-1 accent-yellow-500"> ตั้งราคาเริ่มต้น</label>
+        `);
+    }
+}, 1000);
+
+// 2. อัปเดตฟังก์ชันดึงสิทธิ์ (getPerms) ให้รู้จัก 2 สิทธิ์ใหม่
+window.getPerms = () => {
+    if(!currentUser) return {};
+    // แอดมินมีครบทุกสิทธิ์
+    if(currentUser.toLowerCase() === "admin") {
+        return {pos:!0, history:!0, report:!0, alert:!0, menu:!0, emp:!0, editOrder:!0, cancelOrder:!0, currentOrder:!0, editReport:!0, store:!0, stock:!0, setDef:!0};
+    }
+    let e = globalEmployees.find(x => x.username === currentUser);
+    if(!e) return {};
+    
+    // ถ้าเคยบันทึกสิทธิ์ไว้แล้ว
+    if(e.perms) {
+        if(typeof e.perms.stock === "undefined") e.perms.stock = (e.role === "owner");
+        if(typeof e.perms.setDef === "undefined") e.perms.setDef = (e.role === "owner");
+        return e.perms;
+    }
+    
+    // ถ้ายังไม่เคยตั้งค่าสิทธิ์ (ค่าเริ่มต้นตามตำแหน่ง)
+    let r = e.role;
+    return {
+        pos: r!=="chef", currentOrder: r!=="chef", history: r!=="chef", 
+        report: r==="owner", alert: !0, menu: r==="owner", emp: r==="owner", 
+        editOrder: r!=="chef", cancelOrder: r!=="chef", editReport: r==="owner", 
+        store: r==="owner", stock: r==="owner", setDef: r==="owner"
+    };
+};
+
+// 3. อัปเดตตอนแอดมินคลิก "เพิ่มพนักงานใหม่" หรือ "แก้ไขพนักงาน"
+window.openEmployeeEditor = (k="", d="") => {
+    editingEmpKey = k;
+    let e = d ? JSON.parse(decodeURIComponent(d)) : null;
+    $("editor-title").innerText = k ? "แก้ไขพนักงาน" : "เพิ่มพนักงาน";
+    $("emp-photo-preview").src = e?.photo || "https://cdn-icons-png.flaticon.com/512/149/149071.png";
+    $("emp-role").value = e?.role || "";
+    $("emp-username").value = e?.username || "";
+    $("emp-password").value = e?.password || "";
+    
+    if(currentUser.toLowerCase() === "admin"){
+        $("emp-permissions-section").classList.remove("hidden");
+        if(e && e.perms){
+            $("p-pos").checked = !!e.perms.pos;
+            $("p-current-order").checked = e.perms.currentOrder!==undefined ? !!e.perms.currentOrder : e.role!=="chef";
+            $("p-history").checked = !!e.perms.history;
+            $("p-report").checked = !!e.perms.report;
+            $("p-edit-report").checked = e.perms.editReport!==undefined ? !!e.perms.editReport : e.role==="owner";
+            $("p-alert").checked = !!e.perms.alert;
+            $("p-menu").checked = !!e.perms.menu;
+            $("p-emp").checked = !!e.perms.emp;
+            $("p-edit-order").checked = e.perms.editOrder!==undefined ? !!e.perms.editOrder : e.role!=="chef";
+            $("p-cancel-order").checked = e.perms.cancelOrder!==undefined ? !!e.perms.cancelOrder : e.role!=="chef";
+            $("p-store").checked = e.perms.store!==undefined ? !!e.perms.store : e.role==="owner";
+            
+            // ดึงสิทธิ์ 2 ตัวใหม่มาแสดง
+            if($("p-stock")) $("p-stock").checked = e.perms.stock!==undefined ? !!e.perms.stock : e.role==="owner";
+            if($("p-set-def")) $("p-set-def").checked = e.perms.setDef!==undefined ? !!e.perms.setDef : e.role==="owner";
+        } else if(e){
+            let r=e.role;
+            $("p-pos").checked=r!=="chef"; $("p-current-order").checked=r!=="chef"; $("p-history").checked=r!=="chef";
+            $("p-report").checked=r==="owner"; $("p-edit-report").checked=r==="owner"; $("p-alert").checked=!0;
+            $("p-menu").checked=r==="owner"; $("p-emp").checked=r==="owner"; $("p-edit-order").checked=r!=="chef";
+            $("p-cancel-order").checked=r!=="chef"; $("p-store").checked=r==="owner";
+            if($("p-stock")) $("p-stock").checked = r==="owner";
+            if($("p-set-def")) $("p-set-def").checked = r==="owner";
+        } else {
+            $("p-pos").checked=!1; $("p-current-order").checked=!1; $("p-history").checked=!1;
+            $("p-report").checked=!1; $("p-edit-report").checked=!1; $("p-alert").checked=!1;
+            $("p-menu").checked=!1; $("p-emp").checked=!1; $("p-edit-order").checked=!1;
+            $("p-cancel-order").checked=!1; $("p-store").checked=!1;
+            if($("p-stock")) $("p-stock").checked=!1;
+            if($("p-set-def")) $("p-set-def").checked=!1;
+        }
+    } else {
+        $("emp-permissions-section").classList.add("hidden");
+    }
+    $("emp-editor-modal").style.display="flex";
+};
+
+// 4. อัปเดตตอนกด "เลือกตำแหน่ง" อัตโนมัติ (autoSetPerms)
+window.autoSetPerms = () => {
+    let r = $("emp-role").value;
+    $("p-pos").checked=r!=="chef"; $("p-current-order").checked=r!=="chef"; $("p-history").checked=r!=="chef";
+    $("p-report").checked=r==="owner"; $("p-edit-report").checked=r==="owner"; $("p-alert").checked=!0;
+    $("p-menu").checked=r==="owner"; $("p-emp").checked=r==="owner"; $("p-edit-order").checked=r!=="chef";
+    $("p-cancel-order").checked=r!=="chef"; $("p-store").checked=r==="owner";
+    
+    // ตั้งค่าเริ่มต้นสิทธิ์ใหม่เมื่อเลือก Role
+    if($("p-stock")) $("p-stock").checked = (r === "owner" || r === "staff"); // สมมติให้พนักงานและเจ้าของจัดการสต๊อกได้เบื้องต้น
+    if($("p-set-def")) $("p-set-def").checked = (r === "owner");
+};
+
+// 5. อัปเดตตอนกดบันทึกพนักงาน (saveEmployee) ให้เก็บสิทธิ์ 2 ตัวใหม่ไปด้วย
+window.saveEmployee = () => {
+    let r=$("emp-role").value, u=$("emp-username").value.trim(), p=$("emp-password").value.trim(), pic=$("emp-photo-preview").src;
+    if(!r || !u || !p) return showToast("กรอกข้อมูลให้ครบ");
+    let d = {role:r, username:u, password:p, photo:pic};
+    
+    if(currentUser.toLowerCase() === "admin") {
+        d.perms = {
+            pos: $("p-pos").checked,
+            currentOrder: $("p-current-order").checked,
+            history: $("p-history").checked,
+            report: $("p-report").checked,
+            editReport: $("p-edit-report").checked,
+            alert: $("p-alert").checked,
+            menu: $("p-menu").checked,
+            emp: $("p-emp").checked,
+            editOrder: $("p-edit-order").checked,
+            cancelOrder: $("p-cancel-order").checked,
+            store: $("p-store").checked,
+            stock: $("p-stock") ? $("p-stock").checked : false,      // บันทึกสิทธิ์สต๊อก
+            setDef: $("p-set-def") ? $("p-set-def").checked : false  // บันทึกสิทธิ์ราคาเริ่มต้น
+        };
+    } else if(editingEmpKey) {
+        let o = globalEmployees.find(x => x.key === editingEmpKey);
+        if(o && o.perms) d.perms = o.perms;
+        else d.perms = {pos:r!=="chef", currentOrder:r!=="chef", history:r!=="chef", report:r==="owner", editReport:r==="owner", alert:!0, menu:r==="owner", emp:r==="owner", editOrder:r!=="chef", cancelOrder:r!=="chef", store:r==="owner", stock:r==="owner", setDef:r==="owner"};
+    } else {
+        d.perms = {pos:r!=="chef", currentOrder:r!=="chef", history:r!=="chef", report:r==="owner", editReport:r==="owner", alert:!0, menu:r==="owner", emp:r==="owner", editOrder:r!=="chef", cancelOrder:r!=="chef", store:r==="owner", stock:r==="owner", setDef:r==="owner"};
+    }
+    
+    let ref = editingEmpKey ? db.ref("employees/" + editingEmpKey) : db.ref("employees").push();
+    ref.update(d).then(() => {
+        showToast("บันทึกสำเร็จ");
+        closeModal("emp-editor-modal");
+    });
+};
+
+// 6. ล็อคการทำงาน: สินค้าหลัก (กดค้างที่รูปเมนู)
+window.toggleMenuStock = (e, key) => {
+    e.preventDefault();
+    if(!getPerms().stock) return showToast("⚠️ คุณไม่มีสิทธิ์จัดการสต๊อกสินค้า"); // เช็คสิทธิ์สต๊อก
+    
+    let item = rawMenuData.find(m => m.key === key);
+    if(!item) return;
+    let newState = !item.outOfStock;
+    
+    showConfirmModal("จัดการสต๊อก", `ต้องการตั้งค่าให้ "${item.name}"\n${newState ? '👉 เปลี่ยนเป็น "สินค้าหมด" (ลูกค้าสั่งไม่ได้)' : '👉 เปิดเป็น "มีสินค้า" (สั่งได้ปกติ)'} ใช่หรือไม่?`, () => {
+        db.ref("menus/" + key).update({ outOfStock: newState }).then(() => {
+            showToast(newState ? "🔴 ตั้งเป็นสินค้าหมดแล้ว" : "🟢 เปิดให้สั่งปกติแล้ว");
+        });
+    });
+};
+
+// 7. ล็อคการทำงาน: ตัวเลือกย่อย (หน้าต่างที่เด้งขึ้นมาตอนคลิกขวาที่ออปชัน)
+window.handleOptionRightClick = (e, x, y) => {
+    e.preventDefault();
+    let p = getPerms();
+    
+    // ถ้าไม่มีสิทธิ์ทั้ง 2 อย่าง ไม่ต้องเปิดหน้าต่าง
+    if(!p.stock && !p.setDef) return; 
+    
+    let item = currentModalItem.optGroups[x].items[y];
+    document.getElementById('opt-action-title').innerText = "ตัวเลือก: " + item.n;
+    
+    let btnStock = document.getElementById('btn-opt-stock');
+    let btnDef = document.getElementById('btn-opt-def');
+
+    // โชว์/ซ่อน ปุ่มจัดการสต๊อกตามสิทธิ์
+    if(p.stock) {
+        btnStock.style.display = "block";
+        btnStock.innerHTML = item.outOfStock ? '<span class="material-symbols-outlined align-middle mr-1">check_circle</span> เปิดขายปกติ' : '<span class="material-symbols-outlined align-middle mr-1">block</span> ตั้งว่าสินค้าหมด';
+        btnStock.className = item.outOfStock ? "w-full bg-green-600 text-white font-bold py-3 rounded-xl hover:bg-green-500 transition shadow-lg" : "w-full bg-red-600 text-white font-bold py-3 rounded-xl hover:bg-red-500 transition shadow-lg";
+        btnStock.onclick = () => { closeModal('option-action-modal'); toggleOptionStock(x, y); };
+    } else {
+        btnStock.style.display = "none";
+    }
+
+    // โชว์/ซ่อน ปุ่มตั้งราคาเริ่มต้นตามสิทธิ์
+    if(p.setDef) {
+        btnDef.style.display = "block";
+        btnDef.onclick = () => { closeModal('option-action-modal'); setAsDefaultOptionDirect(x, y); };
+    } else {
+        btnDef.style.display = "none";
+    }
+    
+    document.getElementById('option-action-modal').style.display = 'flex';
+};
+
+// 8. ดักทางเผื่อใครกดฟังก์ชันตั้งราคาเริ่มต้นตรงๆ
+window.setAsDefaultOptionDirect = (x, y) => {
+    if(!getPerms().setDef) return showToast("⚠️ คุณไม่มีสิทธิ์ตั้งราคาเริ่มต้น");
+    // (ส่วนโค้ดเดิมของการตั้งค่า...)
+    let targetItem = currentModalItem.optGroups[x].items[y];
+    let n = targetItem.n;
+    if(targetItem.outOfStock) return showToast("⚠️ สินค้าหมด ไม่สามารถตั้งเป็นค่าเริ่มต้นได้");
+    
+    if(targetItem.def) {
+        showConfirmModal("ยกเลิกราคาเริ่มต้น",`ต้องการยกเลิก [${n}] ไม่ให้เป็นราคาเริ่มต้นใช่ไหม?`,()=>{
+            let ng=JSON.parse(JSON.stringify(currentModalItem.optGroups));
+            ng[x].items[y].def = false; 
+            db.ref("menus/"+currentModalItem.key).update({optGroups:ng}).then(()=>{
+                showToast("🗑️ ยกเลิกราคาเริ่มต้นแล้ว");
+                currentModalItem.optGroups=ng;
+                if(currentAddMode==="pos"||currentAddMode==="edit")renderPOSFoodDetail();
+                else renderFoodDetailModal();
+            });
+        });
+    } else {
+        showConfirmModal("ตั้งราคาเริ่มต้น",`ให้ [${n}] เป็นราคาเริ่มต้นใช่ไหม?`,()=>{
+            let ng=JSON.parse(JSON.stringify(currentModalItem.optGroups));
+            ng.forEach((g,gx)=>g.items.forEach((it,iy)=>it.def=(gx===x&&iy===y)));
+            let up={optGroups:ng};
+            if((currentModalItem.price||0)===0)up.priceReplace=!0;
+            db.ref("menus/"+currentModalItem.key).update(up).then(()=>{
+                showToast("✨ ตั้งเป็นราคาเริ่มต้นแล้ว");
+                currentModalItem.optGroups=ng;
+                if(currentAddMode==="pos"||currentAddMode==="edit")renderPOSFoodDetail();
+                else renderFoodDetailModal();
+            });
+        });
+    }
+};
+
+window.setAsDefaultOption = (e, x, y) => {
+    e.preventDefault();
+    if(!getPerms().setDef) return showToast("⚠️ คุณไม่มีสิทธิ์ตั้งราคาเริ่มต้น");
+    setAsDefaultOptionDirect(x, y);
+};
 </script></body></html>
